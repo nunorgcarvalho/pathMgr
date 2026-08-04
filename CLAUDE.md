@@ -43,8 +43,8 @@ src/pathmgr/
     units.py            Units: the scale a model is stated on + its reference population
     symbols.py          SymbolRegistry: symbol identity + safe expression parsing
     text.py             text front-end: from_text / to_text, a thin layer over the builder
-    ram.py              closed-form covariance engine            (task-…-151347)
-    tracing.py          Wright chain-enumeration engine          (task-…-151348)
+    ram.py              closed-form covariance engine  ← RAMEngine
+    tracing.py          Wright chain-enumeration engine ← WrightTracer, Decomposition
   render/               diagram output — never imported by core
     tikz.py             TikZ export                              (task-…-151349)
     raster.py           PNG/SVG export                           (task-…-151349)
@@ -52,14 +52,23 @@ src/pathmgr/
     pedigree.py         unroll generations into a path model     (task-…-151350)
     am.py               AM dynamics + equilibrium fixed point    (task-…-151351)
 tests/
-  conftest.py                 spike RAM helper + `canonical()` model comparison
+  conftest.py                 shared helpers: ram_sigma wrapper, canonical() comparison
+  battery.py                  THE shared model battery — add models here
+  test_agreement.py           the standing property: RAM engine == Wright tracer
   test_model.py               specification API unit tests
   test_text.py                text front-end: grammar, errors, builder equivalence
+  test_ram.py                 RAM engine: battery, queries, units, robustness
+  test_tracing.py             tracer: enumeration, decomposition, LaTeX, limits
   test_validation_models.py   two hand-encoded models, checked to round-trip
   test_am_spec_spike.py       AM unit vs. the writeup's boxed results
+  test_relative_covariance_section1.py   Section 1 derived by the engine
+scripts/
+  profile_ram.py              RAM engine profile + the AM copath reference model
 examples/
-  spec_demo.py                runnable tour of both front-ends
+  spec_demo.py                runnable tour: both front-ends, engine, tracer
   am_equilibrium.pmg          the AM model as a standalone text file
+docs/
+  profile_ram.md              measured timings + the assortment-representation trap
 ```
 
 ## The specification API
@@ -165,6 +174,43 @@ eng.check_standardization()        # variables whose implied variance isn't 1
   is skipped unless you name the symbol to eliminate: `apply_assumptions=["V_E"]`.
 - See [docs/profile_ram.md](docs/profile_ram.md) for measured timings and the budget for
   unrolling generations. Regenerate with `python scripts/profile_ram.py N`.
+
+## The Wright tracer
+
+```python
+d = pm.WrightTracer(model).trace("y_i", "y_j")
+print(d)                          # itemized chains + total
+d.total                           # same expression the RAM engine returns
+d.to_latex()                      # align* for a writeup; style="tabular" also available
+[c.directed_edges() for c in d]   # for highlighting a chain on a diagram
+```
+
+A chain is `x <- ... <- u  <->  v -> ... -> y`: backward to an ancestor, **exactly one**
+bidirected edge (`u == v` is a variance), then forward. Its value is the product of the
+directed coefficients and the bidirected value; the covariance is the sum over chains. This is
+the RAM identity written out term by term.
+
+**One classical rule is deliberately not enforced: "no variable may appear twice in a chain".**
+It belongs to the *standardized* formulation, where a chain may turn around anywhere using
+`Var = 1` and tracing stops at exogenous variables. Here `S` entries are **disturbance**
+(co)variances, so a turning point is written explicitly as `u <-> u`, and for an endogenous
+variable that is only its residual — the rest of its variance arrives via chains continuing
+back to its ancestors, which necessarily visit the turning-point variable in *both* legs.
+Dropping those would lose `Var[w]`'s ancestral part entirely. A node may repeat *across* legs;
+within a leg it cannot, which in a DAG is automatic. `Chain.revisits` reports them, since
+that's what a reader hand-checking against a textbook will query.
+
+**Cyclic models cannot be traced** — a feedback loop has infinitely many chains. Raises
+`UntraceableModelError` pointing at `RAMEngine`, never silently truncating. Enumeration is also
+capped by `max_chains` (`ChainLimitError`) so a wide lattice fails loudly instead of hanging.
+
+## The correctness property — do not let this rot
+
+`tests/test_agreement.py` asserts the two engines agree symbolically (`simplify(a - b) == 0`)
+on every variable pair of every model in `tests/battery.py`. **Add a model to the battery and
+it is covered automatically** — nothing in the agreement test needs editing. This is the
+project's principal defense against subtle tracing bugs and the reason the package is worth
+writing rather than doing by hand. When you add a feature or a model, add it to the battery.
 
 ## Gotchas that shaped the design
 

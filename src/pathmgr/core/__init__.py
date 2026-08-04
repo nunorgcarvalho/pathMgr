@@ -5,19 +5,29 @@
 - :mod:`.symbols` -- symbol registry + safe parsing of symbolic coefficients
 - :mod:`.text`    -- terse text front-end: text <-> Model, a thin layer over the builder
 - :mod:`.ram`     -- closed-form covariance engine (task-20260804-151347)
-- :mod:`.tracing` -- Wright chain enumeration engine (task-20260804-151348)
+- :mod:`.tracing` -- Wright chain enumeration engine: the covariance DECOMPOSITION
 """
 
 from .model import BidirectedEdge, DirectedEdge, Model, ModelIssue, Variable
 from .ram import CovarianceReport, CyclicModelError, RAMEngine, SingularModelError
 from .symbols import SymbolRegistry
+from .tracing import (
+    Chain,
+    ChainLimitError,
+    Decomposition,
+    UntraceableModelError,
+    WrightTracer,
+)
 from .text import TextSyntaxError, from_text, to_text
 from .units import Units
 
 __all__ = [
     "BidirectedEdge",
+    "Chain",
+    "ChainLimitError",
     "CovarianceReport",
     "CyclicModelError",
+    "Decomposition",
     "DirectedEdge",
     "Model",
     "ModelIssue",
@@ -25,6 +35,8 @@ __all__ = [
     "SingularModelError",
     "SymbolRegistry",
     "TextSyntaxError",
+    "UntraceableModelError",
+    "WrightTracer",
     "Units",
     "Variable",
     "from_text",

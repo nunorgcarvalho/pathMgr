@@ -263,6 +263,79 @@ def engine_tour() -> None:
     print()
 
 
+def tracer_tour() -> None:
+    """The Wright tracer: the decomposition, which is the part that goes into a writeup."""
+    print("=" * 78)
+    print("WRIGHT TRACER")
+    print()
+
+    m = relative_covariance_section1()
+    print("  Section 1 -- why the phenotypic covariance IS the genetic covariance:")
+    print(_indent(pm.WrightTracer(m).trace("y_i", "y_j")))
+    print()
+
+    print("  a mediation chain, direct and indirect routes itemized separately:")
+    med = pm.from_text(
+        """
+        positive: V_x, V_m, V_y
+        m ~ a*x
+        y ~ b*m + c*x
+        x ~~ V_x*x
+        m ~~ V_m*m
+        y ~~ V_y*y
+        """
+    )
+    print(_indent(pm.WrightTracer(med).trace("x", "y")))
+    print()
+
+    print("  and the same decomposition as LaTeX, ready to paste into a writeup:")
+    print(_indent(pm.WrightTracer(med).trace("x", "y").to_latex()))
+    print()
+
+    print("  the two engines agree -- pathMgr's standing correctness property:")
+    engine, tracer = pm.RAMEngine(m), pm.WrightTracer(m)
+    for x, y in [("y_i", "y_j"), ("g_i", "g_j"), ("y_i", "y_i")]:
+        agree = sp.simplify(tracer.cov(x, y) - engine.cov(x, y)) == 0
+        print(f"    Cov[{x}, {y}]: traced == matrix -> {agree}")
+    print()
+
+    print("  a chain may visit a node in BOTH legs, and must for correctness:")
+    tp = pm.from_text(
+        """
+        positive: V_b, V_c, V_w, V_x, V_y
+        w ~ p_b*b + p_c*c
+        x ~ q*w
+        y ~ r*w
+        b ~~ V_b*b
+        c ~~ V_c*c
+        b ~~ C_bc*c
+        w ~~ V_w*w
+        x ~~ V_x*x
+        y ~~ V_y*y
+        """
+    )
+    print(_indent(pm.WrightTracer(tp).trace("x", "y")))
+    print("    (Cov[x,y] = q*r*Var[w]; the w-revisiting chains carry Var[w]'s ancestral part)")
+    print()
+
+    print("  a feedback loop cannot be enumerated, and says so:")
+    cyc = pm.Model("feedback")
+    cyc.add_vars("x", "y", "z")
+    cyc.add_path("x", "y", "a")
+    cyc.add_path("y", "z", "b")
+    cyc.add_path("z", "y", "d")
+    cyc.add_variance("x", "S_x")
+    try:
+        pm.WrightTracer(cyc).trace("x", "y")
+    except pm.UntraceableModelError as exc:
+        print(f"    {str(exc)[:150]}...")
+    print()
+
+
+def _indent(block: object, pad: str = "    ") -> str:
+    return "\n".join(pad + line for line in str(block).splitlines())
+
+
 if __name__ == "__main__":
     for model in (
         bivariate_regression(),
@@ -272,3 +345,4 @@ if __name__ == "__main__":
         show(model)
     text_front_end_tour()
     engine_tour()
+    tracer_tour()

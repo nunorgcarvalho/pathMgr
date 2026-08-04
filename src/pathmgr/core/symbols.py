@@ -106,13 +106,20 @@ class SymbolRegistry:
         return self._canonicalise(expr)
 
     def _canonicalise(self, expr: sp.Expr) -> sp.Expr:
-        """Map every free symbol onto this registry's version of that name.
+        """Give every free symbol this registry's assumptions for that name.
 
-        A newly seen name is registered with :attr:`DEFAULT_ASSUMPTIONS`, whatever
-        assumptions it arrived with. That matters: the parser's ``auto_symbol`` emits bare
-        ``Symbol(name)`` with no assumptions, so without this a symbol's assumptions would
-        depend on whether it first appeared in a string or via :meth:`get` -- and two
-        differently-assumed symbols of the same name do not cancel.
+        A newly seen name is registered with :attr:`DEFAULT_ASSUMPTIONS`, whatever assumptions
+        it arrived with. That matters: the parser's ``auto_symbol`` emits bare ``Symbol(name)``
+        with no assumptions, so without this a symbol's assumptions would depend on whether it
+        first appeared in a string or via :meth:`get` -- and two same-named symbols with
+        differing assumptions are *unequal* in sympy and will not cancel.
+
+        Note what this does and does not promise. It normalises **assumptions**, not object
+        identity: when the incoming symbol already equals the registered one, sympy's ``subs``
+        skips equal old/new pairs and returns the original object. That is harmless, because
+        equal symbols are interchangeable everywhere in sympy. Do not write code (or tests)
+        that depends on ``is`` -- sympy's Symbol constructor is LRU-cached at size 1000, so
+        equal symbols become distinct objects once a process has created enough of them.
         """
         subs = {}
         for free in expr.free_symbols:

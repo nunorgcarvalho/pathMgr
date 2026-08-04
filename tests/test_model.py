@@ -87,12 +87,23 @@ def test_symbol_names_are_never_captured_by_sympy_builtins():
 
 
 def test_one_name_is_always_one_symbol():
+    """One name -> one set of assumptions, so expressions built from both cancel.
+
+    Deliberately NOT asserting object identity (``is``). sympy's Symbol constructor is
+    LRU-cached at size 1000, so once enough symbols exist in a process, an equal symbol comes
+    back as a distinct object -- identity is an artifact of that cache, not an invariant
+    anything should rely on. What matters, and what the registry actually guarantees, is that
+    the assumptions agree, because two same-named symbols with *differing* assumptions are
+    unequal in sympy and will not cancel.
+    """
     m = pm.Model().add_vars("x", "y", "z")
     m.add_path("x", "y", "b")
     m.add_path("x", "z", "b")
-    # same Symbol object, so expressions built from both cancel
-    assert m.path_coeff("x", "y") is m.path_coeff("x", "z")
-    assert sp.simplify(m.path_coeff("x", "y") - m.path_coeff("x", "z")) == 0
+    first, second = m.path_coeff("x", "y"), m.path_coeff("x", "z")
+    assert first == second
+    assert first.assumptions0 == second.assumptions0
+    assert sp.simplify(first - second) == 0
+    assert sp.simplify(first / second - 1) == 0
 
 
 def test_declared_assumptions_are_honoured():
@@ -112,12 +123,20 @@ def test_redeclaring_a_symbol_differently_is_an_error():
 
 
 def test_prebuilt_sympy_symbols_are_canonicalised_to_the_registry():
+    """A bare Symbol handed in must pick up the registry's assumptions.
+
+    This is the case that genuinely matters: ``Symbol('b')`` and ``Symbol('b', positive=True)``
+    are *unequal* in sympy, so without canonicalisation the two edges would carry
+    non-cancelling coefficients.
+    """
     m = pm.Model().add_vars("x", "y", "z")
     m.declare("b", positive=True)
     m.add_path("x", "y", "b")
     m.add_path("x", "z", sp.Symbol("b"))  # bare, no assumptions -- must be unified
-    assert m.path_coeff("x", "z") is m.sym("b")
+    assert m.path_coeff("x", "z") == m.sym("b")
     assert m.path_coeff("x", "z").is_positive
+    assert m.path_coeff("x", "z") == m.path_coeff("x", "y")
+    assert sp.simplify(m.path_coeff("x", "z") - m.path_coeff("x", "y")) == 0
 
 
 # -- units ----------------------------------------------------------------------------

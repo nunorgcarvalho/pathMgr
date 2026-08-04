@@ -15,8 +15,11 @@ on top of it.
 
 from .core import (
     BidirectedEdge,
+    Chain,
+    ChainLimitError,
     CovarianceReport,
     CyclicModelError,
+    Decomposition,
     DirectedEdge,
     Model,
     ModelIssue,
@@ -24,6 +27,8 @@ from .core import (
     SingularModelError,
     SymbolRegistry,
     TextSyntaxError,
+    UntraceableModelError,
+    WrightTracer,
     Units,
     Variable,
     from_text,
@@ -34,8 +39,11 @@ __version__ = "0.0.1"
 
 __all__ = [
     "BidirectedEdge",
+    "Chain",
+    "ChainLimitError",
     "CovarianceReport",
     "CyclicModelError",
+    "Decomposition",
     "DirectedEdge",
     "Model",
     "ModelIssue",
@@ -43,6 +51,8 @@ __all__ = [
     "SingularModelError",
     "SymbolRegistry",
     "TextSyntaxError",
+    "UntraceableModelError",
+    "WrightTracer",
     "Units",
     "Variable",
     "__version__",
