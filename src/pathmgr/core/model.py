@@ -381,6 +381,20 @@ class Model:
         new._revision = self._revision
         return new
 
+    # -- text front-end ---------------------------------------------------------------
+    @classmethod
+    def from_text(cls, text: str, name: str | None = None) -> "Model":
+        """Build a model from the terse text grammar. See :mod:`pathmgr.core.text`."""
+        from .text import from_text  # late import: text.py imports this module
+
+        return from_text(text, name=name)
+
+    def to_text(self, include_name: bool = True) -> str:
+        """Render this model in the text grammar. Round-trips through :meth:`from_text`."""
+        from .text import to_text
+
+        return to_text(self, include_name=include_name)
+
     # -- display ----------------------------------------------------------------------
     def describe(self) -> str:
         """A human-readable dump of the specification."""

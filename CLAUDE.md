@@ -42,6 +42,7 @@ src/pathmgr/
     model.py            Model, Variable, DirectedEdge, BidirectedEdge  ← the spec object
     units.py            Units: the scale a model is stated on + its reference population
     symbols.py          SymbolRegistry: symbol identity + safe expression parsing
+    text.py             text front-end: from_text / to_text, a thin layer over the builder
     ram.py              closed-form covariance engine            (task-…-151347)
     tracing.py          Wright chain-enumeration engine          (task-…-151348)
   render/               diagram output — never imported by core
@@ -51,10 +52,14 @@ src/pathmgr/
     pedigree.py         unroll generations into a path model     (task-…-151350)
     am.py               AM dynamics + equilibrium fixed point    (task-…-151351)
 tests/
+  conftest.py                 spike RAM helper + `canonical()` model comparison
   test_model.py               specification API unit tests
+  test_text.py                text front-end: grammar, errors, builder equivalence
   test_validation_models.py   two hand-encoded models, checked to round-trip
+  test_am_spec_spike.py       AM unit vs. the writeup's boxed results
 examples/
-  spec_demo.py                runnable tour of the specification API
+  spec_demo.py                runnable tour of both front-ends
+  am_equilibrium.pmg          the AM model as a standalone text file
 ```
 
 ## The specification API
@@ -90,6 +95,43 @@ Conventions, all load-bearing:
   on it**, since the symbolic `(I - A)^-1` is the expensive step.
 - `m.assume(...)` records side relations (`rho_g = rho_y * h2_eq`, `V_A + V_E = 1`) that are
   *not* edges. Engines may substitute them in, but only opt-in, never silently.
+
+## The text front-end
+
+`pm.from_text(...)` / `m.to_text()` (or `Model.from_text`). It is a **thin layer over the
+builder** — the parser makes builder calls and nothing else, so the two front-ends cannot
+diverge in meaning. Keep it that way: no feature may exist in text that the builder lacks.
+`tests/test_am_spec_spike.py::test_text_front_end_produces_the_identical_model` is the
+guard, comparing the full AM model built both ways.
+
+```
+units: unstandardized                  # or: standardized to base generation (gen 0)
+latent: g_i, e_i                       # everything else is observed
+observed: z                            # only needed for isolated nodes
+positive: V_A, V_E                     # sympy assumptions on SYMBOLS
+label: g_i = $g_i$                     # rendering label
+assume: V_A + V_E = 1                  # side relation, not an edge
+
+y_i ~ g_i + e_i                        # directed; coefficient 1 implied
+y   ~ b1*x1 + b2*x2
+g_o ~ 1/2*g_m + 1/2*g_f + s_o          # exact rationals, not floats
+g_c ~ ((1 + rho_g)/2)*g_p              # parenthesise a compound coefficient
+
+x1  ~~ V_1*x1                          # a variance
+g_i ~~ (V_A*pi_ij)*g_j                 # a covariance, expression value
+```
+
+Directives may appear in any order (they are all processed before the equations), so a
+`latent:` line can sit at the bottom. Variables are created on first use in a variable
+position. Every parse error carries its line number and the offending line
+(`TextSyntaxError`).
+
+**The one rule to internalise: every right-hand-side term must end in a variable name.**
+In `(V_A*pi_ij)*g_j` the trailing identifier is the variable and everything before the final
+`*` is the coefficient. There is deliberately **no** bare-variance shorthand, because
+`g_i ~~ V_A` cannot be disambiguated — is `V_A` the variance of `g_i`, or a variable it
+covaries with? Write `g_i ~~ V_A*g_i`. As a backstop, a name used both as a variable and as
+a coefficient symbol is rejected outright.
 
 ## Gotchas that shaped the design
 

@@ -19,8 +19,11 @@ from .core import (
     Model,
     ModelIssue,
     SymbolRegistry,
+    TextSyntaxError,
     Units,
     Variable,
+    from_text,
+    to_text,
 )
 
 __version__ = "0.0.1"
@@ -31,7 +34,10 @@ __all__ = [
     "Model",
     "ModelIssue",
     "SymbolRegistry",
+    "TextSyntaxError",
     "Units",
     "Variable",
     "__version__",
+    "from_text",
+    "to_text",
 ]

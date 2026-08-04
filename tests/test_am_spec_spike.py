@@ -24,11 +24,15 @@ establishes about the API, both of which drove design choices:
 The real versions of these checks belong to task-20260804-151351, against the real engine.
 """
 
+from pathlib import Path
+
 import sympy as sp
 
 import pathmgr as pm
 
-from conftest import ram_sigma
+from conftest import canonical, ram_sigma
+
+AM_TEXT_FILE = Path(__file__).resolve().parent.parent / "examples" / "am_equilibrium.pmg"
 
 
 def am_pair_with_two_children() -> pm.Model:
@@ -68,6 +72,18 @@ def am_pair_with_two_children() -> pm.Model:
     m.assume("V_A_eq", "V_A0 / (1 - rho_g)")
     m.assume("V_K", "V_A0 / 2")
     return m
+
+
+def test_text_front_end_produces_the_identical_model():
+    """The hardest equivalence check available: the full AM model, both ways.
+
+    ``examples/am_equilibrium.pmg`` is this same model in the text grammar. If the two
+    front-ends ever drift, this is where it shows up.
+    """
+    from_text = pm.from_text(AM_TEXT_FILE.read_text(), name="AM equilibrium: pair + two full sibs")
+    assert canonical(from_text) == canonical(am_pair_with_two_children())
+    # and it survives a round trip through to_text
+    assert canonical(pm.from_text(from_text.to_text())) == canonical(from_text)
 
 
 def test_am_model_is_structurally_sane():
