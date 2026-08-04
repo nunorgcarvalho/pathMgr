@@ -1,0 +1,404 @@
+"""Tests for diagram rendering: TikZ, raster, layout, and chain highlighting.
+
+Two things here are more than cosmetic and are tested as such.
+
+**The three edge types must be unmistakable.** A reader who takes a co-path for a covariance
+arrow will apply the wrong tracing rules and get a wrong answer by hand, so the co-path is
+asserted to differ from a bidirected edge on arrowheads *and* weight *and* colour, and to carry
+no arrow tips at all.
+
+**The TikZ must actually compile**, not merely look plausible -- verified by running pdflatex
+when it is available, and skipped rather than faked when it is not.
+"""
+
+import shutil
+
+import pytest
+import sympy as sp
+
+import pathmgr as pm
+from pathmgr.render import (
+    DiagramStyle,
+    Layout,
+    coefficient_label,
+    layered_layout,
+    pedigree_layout,
+    to_image,
+    to_standalone,
+    to_tikz,
+    write_pdf,
+)
+from pathmgr.render.tikz import highlight_sets
+
+from battery import all_models
+
+HAS_PDFLATEX = shutil.which("pdflatex") is not None
+try:
+    import matplotlib  # noqa: F401
+
+    HAS_MATPLOTLIB = True
+except ImportError:  # pragma: no cover
+    HAS_MATPLOTLIB = False
+
+
+def copath_chain(model: pm.Model):
+    """The chain between the two g's that crosses the co-path.
+
+    The fixture deliberately carries BOTH a bidirected edge and a co-path between the partners,
+    so `chains[0]` is whichever came first -- pick by what the chain actually crosses.
+    """
+    return next(c for c in pm.WrightTracer(model).trace("g_m", "g_f") if c.crosses_copaths)
+
+
+def three_edge_model() -> pm.Model:
+    """A model carrying all three edge types, a latent/observed mix, and a variance."""
+    return pm.from_text(
+        """
+        latent: g_m, e_m, g_f, e_f
+        positive: V_A, V_E
+        label: g_m = $g_m$
+        y_m ~ g_m + e_m
+        y_f ~ g_f + e_f
+        g_m ~~ V_A*g_m
+        e_m ~~ V_E*e_m
+        g_f ~~ V_A*g_f
+        e_f ~~ V_E*e_f
+        g_m ~~ c_gg*g_f
+        y_m -- (rho_y/(V_A + V_E))*y_f
+        """,
+        name="three edge types",
+    )
+
+
+# ======================================================================================
+# the conventions
+# ======================================================================================
+def test_latent_and_observed_get_different_shapes():
+    tex = to_tikz(three_edge_model())
+    assert "pmLatent/.style" in tex and "ellipse" in tex
+    assert "pmObserved/.style" in tex and "rectangle" in tex
+    assert "\\node[pmLatent] (g_m)" in tex
+    assert "\\node[pmObserved] (y_m)" in tex
+
+
+def test_the_three_edge_types_are_visually_distinct():
+    """The load-bearing test: a co-path must not be confusable with a covariance arrow."""
+    style = DiagramStyle()
+    tex = to_tikz(three_edge_model(), style=style)
+
+    # arrowheads: one, two, none
+    assert f"pmDirected/.style={{{style.arrow_tip_directed}" in tex
+    assert f"pmBidirected/.style={{{style.arrow_tip_bidirected}" in tex
+    copath_style = [line for line in tex.splitlines() if "pmCopath/.style" in line][0]
+    assert "->" not in copath_style and "<-" not in copath_style, copath_style
+
+    # weight: the co-path is thicker
+    assert style.copath_width > style.bidirected_width
+    assert style.copath_width > style.directed_width
+
+    # colour: the co-path is drawn in its own, declared as a real colour not a raw hex
+    assert "\\definecolor" in tex
+    assert style.copath_colour.lstrip("#").upper() in tex
+
+    # curvature: bidirected bends, the co-path is straight
+    assert "to[bend left=30]" in tex
+    assert "(y_f) -- " in tex or "(y_m) -- " in tex
+
+
+def test_all_three_edge_kinds_are_actually_emitted():
+    tex = to_tikz(three_edge_model())
+    assert tex.count("pmDirected") >= 4 + 1  # 4 paths plus the style definition
+    assert "pmBidirected" in tex
+    assert "pmCopath" in tex
+
+
+def test_variance_is_a_self_loop_and_can_be_suppressed():
+    model = three_edge_model()
+    assert "loop above" in to_tikz(model)
+    assert "loop above" not in to_tikz(model, style=DiagramStyle(show_variances=False))
+
+
+def test_several_copaths_on_one_couple_stay_separable():
+    """Cross-trait assortment: two co-paths between the same pair must not overlap."""
+    model = pm.Model()
+    model.add_vars("S_m", "S_f")
+    model.add_variance("S_m", "V")
+    model.add_variance("S_f", "V")
+    model.add_copath("S_m", "S_f", "mu", process="couple")
+    model.add_copath("S_m", "S_f", "mu_prime", process="other")
+    tex = to_tikz(model)
+    copath_lines = [line for line in tex.splitlines() if "pmCopath," in line]
+    assert len(copath_lines) == 2
+    assert sum("bend right" in line for line in copath_lines) == 1  # the second is bowed
+
+
+# ======================================================================================
+# labels
+# ======================================================================================
+def test_coefficients_render_as_latex_math_not_raw_names():
+    assert coefficient_label(sp.Symbol("rho_y")) == "\\rho_{y}"
+    assert coefficient_label(sp.Rational(1, 2)) == "\\frac{1}{2}"
+    assert coefficient_label(sp.Integer(1)) == ""  # unit coefficients are omitted
+    assert coefficient_label(sp.Integer(1), omit_unit=False) == "1"
+
+
+def test_rho_y_appears_as_a_greek_letter_in_the_output():
+    tex = to_tikz(three_edge_model())
+    assert "\\rho_{y}" in tex
+    assert "rho_y" not in tex.replace("\\rho_{y}", "")
+
+
+def test_edge_and_node_labels_can_be_overridden():
+    model = three_edge_model()
+    style = DiagramStyle(
+        label_overrides={("g_m", "y_m"): r"\alpha"},
+        node_label_overrides={"y_m": r"P_{\text{m}}"},
+    )
+    tex = to_tikz(model, style=style)
+    assert "\\alpha" in tex
+    assert "P_{\\text{m}}" in tex
+
+
+def test_variable_labels_are_used_and_their_dollars_stripped():
+    tex = to_tikz(three_edge_model())
+    assert "{$g_m$}" in tex  # from `label: g_m = $g_m$`, not double-wrapped
+    assert "$$" not in tex
+
+
+def test_unit_coefficients_can_be_shown():
+    tex = to_tikz(three_edge_model(), style=DiagramStyle(show_unit_coefficients=True))
+    assert "{$1$}" in tex
+
+
+# ======================================================================================
+# layout
+# ======================================================================================
+def test_explicit_coordinates_are_honoured_exactly():
+    model = three_edge_model()
+    layout = Layout({"g_m": (3.0, 4.0)})
+    tex = to_tikz(model, layout=layout)
+    assert "(g_m) at (3.000,4.000)" in tex
+
+
+def test_partial_layout_is_completed_automatically():
+    model = three_edge_model()
+    completed = Layout({"g_m": (9.0, 9.0)}).completed(model)
+    assert completed["g_m"] == (9.0, 9.0)
+    assert set(completed.positions) == set(model.names)
+
+
+def test_layered_layout_puts_parents_above_children():
+    model = three_edge_model()
+    layout = layered_layout(model)
+    assert layout["g_m"][1] > layout["y_m"][1]
+    assert layout["g_f"][1] > layout["y_f"][1]
+
+
+def test_layered_layout_handles_a_cyclic_model():
+    """A feedback model has no well-defined depth, but is still worth drawing."""
+    model = pm.Model()
+    model.add_vars("x", "y", "z")
+    model.add_path("x", "y", "a")
+    model.add_path("y", "z", "b")
+    model.add_path("z", "y", "d")
+    model.add_variance("x", "S")
+    layout = layered_layout(model)
+    assert set(layout.positions) == {"x", "y", "z"}
+    assert "\\node" in to_tikz(model)
+
+
+def test_pedigree_layout_places_generations_as_rows():
+    layout = pedigree_layout({"y_m": 0, "y_f": 0, "y_o": 1})
+    assert layout["y_m"][1] == layout["y_f"][1]
+    assert layout["y_o"][1] < layout["y_m"][1]
+    assert layout["y_m"][0] != layout["y_f"][0]
+
+
+@pytest.mark.parametrize("name", sorted(all_models()))
+def test_every_battery_model_renders_with_auto_layout(name):
+    """"Legible and correct" is the bar for auto-layout; at minimum it must never fail."""
+    model = all_models()[name]
+    tex = to_tikz(model)
+    assert tex.startswith("\\definecolor") or tex.startswith("\\begin{tikzpicture}")
+    assert tex.rstrip().endswith("\\end{tikzpicture}")
+    for variable in model.variables:
+        assert f"({variable.name.replace('.', '-')})" in tex
+    # no node placed on top of another
+    positions = layered_layout(model).positions
+    assert len(set(positions.values())) == len(positions), f"{name}: overlapping nodes"
+
+
+def test_node_ids_are_tikz_safe():
+    model = pm.Model()
+    model.add_var("a.b:c")
+    model.add_var("plain")
+    model.add_path("a.b:c", "plain", "q")
+    tex = to_tikz(model)
+    assert "(a-b-c)" in tex
+    assert "(a.b:c)" not in tex
+
+
+# ======================================================================================
+# highlighting a traced chain
+# ======================================================================================
+def test_highlight_sets_come_from_the_chain():
+    model = three_edge_model()
+    chain = copath_chain(model)
+    directed, bidirected, copaths = highlight_sets(chain)
+    assert directed
+    assert bidirected
+    assert copaths == {frozenset({"y_m", "y_f"})}
+
+
+def test_highlighting_emphasises_the_chain_and_fades_the_rest():
+    model = three_edge_model()
+    chain = copath_chain(model)
+    style = DiagramStyle()
+    tex = to_tikz(model, highlight=chain, style=style)
+
+    highlight_hex = style.highlight_colour.lstrip("#").upper()
+    faded_hex = style.faded_colour.lstrip("#").upper()
+    assert highlight_hex in tex  # the chain's edges
+    assert faded_hex in tex  # everything else
+    # the co-path the chain crosses is drawn emphasised, at the boosted width
+    boosted = f"{style.copath_width * style.highlight_scale:.2f}pt"
+    assert boosted in tex
+
+
+def test_highlight_caption_states_which_term_is_shown():
+    model = three_edge_model()
+    chain = copath_chain(model)
+    tex = to_tikz(model, highlight=chain)
+    assert "\\leftrightarrow" in tex
+    assert "\\text{---}" in tex  # the co-path crossing, not a minus sign
+    assert to_tikz(model, highlight=chain, caption_chain=False).count("\\text{---}") == 0
+
+
+def test_copath_crossing_is_not_rendered_as_a_minus_sign():
+    """`a - b` in math mode reads as subtraction; a co-path must not look like one."""
+    model = three_edge_model()
+    chain = copath_chain(model)
+    assert "\\;\\text{---}\\;" in chain.tex_path()
+    assert " - " not in chain.tex_path()
+
+
+def test_rendering_never_needs_the_engines():
+    """A model must be drawable without computing anything."""
+    import pathmgr.render.tikz as tikz_module
+
+    source = open(tikz_module.__file__).read()
+    assert "RAMEngine" not in source
+    assert "WrightTracer" not in source
+
+
+# ======================================================================================
+# standalone document and compilation
+# ======================================================================================
+def test_standalone_is_a_complete_document():
+    source = to_standalone(three_edge_model())
+    assert "\\documentclass" in source
+    assert "\\usepackage{tikz}" in source
+    assert "\\usetikzlibrary{shapes.geometric}" in source
+    assert "\\begin{document}" in source and "\\end{document}" in source
+    assert "\\begin{tikzpicture}" in source
+
+
+def test_standalone_does_not_require_arrows_meta_or_standalone_class():
+    """Both are absent from a plain TinyTeX install, so the default output must avoid them."""
+    source = to_standalone(three_edge_model())
+    assert "arrows.meta" not in source
+    assert "standalone" not in source
+    assert "Latex[" not in source
+
+
+def test_standalone_page_is_sized_to_the_drawing():
+    source = to_standalone(three_edge_model(), layout=Layout({"g_m": (0, 0), "y_f": (12, -9)}))
+    assert "paperwidth=" in source and "paperheight=" in source
+
+
+@pytest.mark.skipif(not HAS_PDFLATEX, reason="pdflatex not available")
+def test_tikz_actually_compiles(tmp_path):
+    out = write_pdf(three_edge_model(), tmp_path / "d.pdf")
+    assert out.exists() and out.stat().st_size > 1000
+    assert out.read_bytes().startswith(b"%PDF")
+
+
+@pytest.mark.skipif(not HAS_PDFLATEX, reason="pdflatex not available")
+def test_highlighted_diagram_compiles(tmp_path):
+    model = three_edge_model()
+    chain = copath_chain(model)
+    out = write_pdf(model, tmp_path / "h.pdf", highlight=chain)
+    assert out.exists() and out.stat().st_size > 1000
+
+
+@pytest.mark.skipif(not HAS_PDFLATEX, reason="pdflatex not available")
+@pytest.mark.parametrize(
+    "name", ["co-path AM example", "half-sibling pedigree", "relative covariance S1"]
+)
+def test_representative_battery_models_compile(tmp_path, name):
+    model = all_models()[name]
+    out = write_pdf(model, tmp_path / f"{name.replace(' ', '_')}.pdf")
+    assert out.exists() and out.stat().st_size > 1000
+
+
+def test_missing_latex_gives_a_clear_error(tmp_path):
+    from pathmgr.render.tikz import TikzCompileError
+
+    with pytest.raises(TikzCompileError, match="not on PATH"):
+        write_pdf(three_edge_model(), tmp_path / "x.pdf", engine="definitely-not-a-real-engine")
+
+
+# ======================================================================================
+# raster
+# ======================================================================================
+@pytest.mark.skipif(not HAS_MATPLOTLIB, reason="matplotlib not available")
+@pytest.mark.parametrize("suffix", [".png", ".svg", ".pdf"])
+def test_raster_export_writes_a_file(tmp_path, suffix):
+    out = to_image(three_edge_model(), tmp_path / f"d{suffix}")
+    assert out.exists() and out.stat().st_size > 500
+
+
+@pytest.mark.skipif(not HAS_MATPLOTLIB, reason="matplotlib not available")
+def test_raster_honours_explicit_layout_and_highlight(tmp_path):
+    model = three_edge_model()
+    chain = copath_chain(model)
+    layout = Layout({"g_m": (0, 0), "e_m": (1.6, 0), "y_m": (0.8, -1.8)})
+    out = to_image(model, tmp_path / "h.png", layout=layout, highlight=chain, legend=True)
+    assert out.exists()
+
+
+@pytest.mark.skipif(not HAS_MATPLOTLIB, reason="matplotlib not available")
+def test_raster_arc_midpoint_lands_on_the_curve():
+    """A curved edge's label must sit on its arc, not mirrored to the wrong side."""
+    from pathmgr.render.raster import _arc_midpoint
+
+    start, end, rad = (0.0, 0.0), (4.0, 0.0), 0.3
+    x, y = _arc_midpoint(start, end, rad)
+    assert abs(x - 2.0) < 1e-9  # halfway along
+    # matplotlib's arc3 with positive rad bows to NEGATIVE y for a left-to-right chord
+    assert y < 0
+    assert abs(y - (-rad * 4.0 / 2.0)) < 1e-9
+
+
+@pytest.mark.skipif(not HAS_MATPLOTLIB, reason="matplotlib not available")
+def test_every_battery_model_rasterises(tmp_path):
+    for name, model in sorted(all_models().items()):
+        if len(model.names) > 24:  # keep the suite quick; big pedigrees are covered by TikZ
+            continue
+        out = to_image(model, tmp_path / f"{abs(hash(name))}.png", dpi=60)
+        assert out.exists(), name
+
+
+def test_core_import_does_not_pull_in_matplotlib():
+    """Computing must not require a drawing dependency."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; import pathmgr; "
+        "assert 'matplotlib' not in sys.modules, sorted(m for m in sys.modules "
+        "if 'matplotlib' in m); print('clean')"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "clean" in result.stdout

@@ -273,9 +273,13 @@ class Chain:
         """``'1/2 * V_A * 1/2'`` -- the contribution before multiplying out."""
         return " * ".join(sp.sstr(f) for f in self.factors)
 
+    #: how a co-path crossing renders in math mode. An em dash in \text, not a bare "-",
+    #: which would read as a minus sign and make a chain look like a subtraction.
+    COPATH_TEX = r" \;\text{---}\; "
+
     def tex_path(self, labels: dict[str, str] | None = None) -> str:
         """The chain as math-mode LaTeX, using each variable's label where it has one."""
-        return " - ".join(s.tex_path(labels) for s in self.segments)
+        return self.COPATH_TEX.join(s.tex_path(labels) for s in self.segments)
 
     def __str__(self) -> str:
         return f"{self.path_string()}   =  {sp.sstr(self.contribution)}"

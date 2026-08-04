@@ -1,9 +1,28 @@
 """Path-diagram rendering. Kept strictly separate from covariance computation.
 
-- :mod:`.tikz`   -- TikZ export for dropping straight into a LaTeX writeup
-- :mod:`.raster` -- standalone image export for slides and quick inspection
+- :mod:`.layout` -- node placement: explicit coordinates, with a layered automatic fallback
+- :mod:`.style`  -- the drawing conventions, shared by both back ends
+- :mod:`.tikz`   -- TikZ export for a LaTeX writeup, plus PDF compilation
+- :mod:`.raster` -- PNG/SVG export via matplotlib
 
-Both are task-20260804-151349. Nothing here may be imported by :mod:`pathmgr.core`.
+Nothing here may be imported by :mod:`pathmgr.core`, and matplotlib is imported lazily inside
+:mod:`.raster` so that ``import pathmgr`` never needs a drawing dependency.
 """
 
-__all__: list[str] = []
+from .layout import Layout, layered_layout, pedigree_layout
+from .raster import to_image
+from .style import DiagramStyle, coefficient_label
+from .tikz import TikzCompileError, to_standalone, to_tikz, write_pdf
+
+__all__ = [
+    "DiagramStyle",
+    "Layout",
+    "TikzCompileError",
+    "coefficient_label",
+    "layered_layout",
+    "pedigree_layout",
+    "to_image",
+    "to_standalone",
+    "to_tikz",
+    "write_pdf",
+]

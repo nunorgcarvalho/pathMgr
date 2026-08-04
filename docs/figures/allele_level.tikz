@@ -1,0 +1,30 @@
+\definecolor{pmCB03A2E}{HTML}{B03A2E}
+\begin{tikzpicture}[
+  every node/.style={font=\small},
+  pmObserved/.style={draw=black, fill=white, rectangle, minimum width=0.85cm, minimum height=0.6cm, inner sep=1pt},
+  pmLatent/.style={draw=black, fill=white, ellipse, minimum width=0.85cm, minimum height=0.6cm, inner sep=1pt},
+  pmDirected/.style={->, line width=0.7pt},
+  pmBidirected/.style={<->, line width=0.7pt},
+  pmCopath/.style={line width=1.6pt},
+  pmLabel/.style={midway, fill=white, inner sep=1pt},
+]
+  \node[pmLatent] (z_mat_m) at (0.000,1.900) {$z^{(m)}_{m}$};
+  \node[pmLatent] (z_pat_m) at (1.800,1.900) {$z^{(p)}_{m}$};
+  \node[pmLatent] (g_m) at (0.900,0.000) {$g_m$};
+  \node[pmLatent] (e_m) at (2.700,0.000) {$e_m$};
+  \node[pmLatent] (z_mat_f) at (5.800,1.900) {$z^{(m)}_{f}$};
+  \node[pmLatent] (z_pat_f) at (7.600,1.900) {$z^{(p)}_{f}$};
+  \node[pmLatent] (g_f) at (6.700,0.000) {$g_f$};
+  \node[pmLatent] (e_f) at (4.900,0.000) {$e_f$};
+  \node[pmObserved] (y_m) at (1.400,-2.000) {$y_m$};
+  \node[pmObserved] (y_f) at (6.200,-2.000) {$y_f$};
+  \draw[pmDirected, draw=black] (z_mat_m) -- node[pmLabel] {$\beta$} (g_m);
+  \draw[pmDirected, draw=black] (z_pat_m) -- node[pmLabel] {$\beta$} (g_m);
+  \draw[pmDirected, draw=black] (z_mat_f) -- node[pmLabel] {$\beta$} (g_f);
+  \draw[pmDirected, draw=black] (z_pat_f) -- node[pmLabel] {$\beta$} (g_f);
+  \draw[pmDirected, draw=black] (g_m) -- (y_m);
+  \draw[pmDirected, draw=black] (e_m) -- (y_m);
+  \draw[pmDirected, draw=black] (g_f) -- (y_f);
+  \draw[pmDirected, draw=black] (e_f) -- (y_f);
+  \draw[pmCopath, draw=pmCB03A2E] (y_f) -- node[pmLabel] {$\frac{\rho_{y}}{V_{E} + \beta^{2}}$} (y_m);
+\end{tikzpicture}

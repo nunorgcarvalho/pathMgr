@@ -446,6 +446,57 @@ def copath_tour() -> None:
     print()
 
 
+def rendering_tour() -> None:
+    """Rendering: the three edge types, and one traced chain highlighted on the diagram."""
+    from pathmgr.render import DiagramStyle, Layout, to_tikz
+
+    print("=" * 78)
+    print("RENDERING")
+    print()
+
+    m = pm.from_text(
+        """
+        latent: g_m, e_m, g_f, e_f
+        positive: V_A, V_E
+        y_m ~ g_m + e_m
+        y_f ~ g_f + e_f
+        g_m ~~ V_A*g_m
+        e_m ~~ V_E*e_m
+        g_f ~~ V_A*g_f
+        e_f ~~ V_E*e_f
+        y_m -- (rho_y/(V_A + V_E))*y_f
+        """,
+        name="mated pair",
+    )
+    layout = Layout({"g_m": (0, 0), "e_m": (1.7, 0), "y_m": (0.85, -1.9),
+                     "g_f": (5.1, 0), "e_f": (6.8, 0), "y_f": (5.95, -1.9)})
+    tex = to_tikz(m, layout=layout, style=DiagramStyle(show_variances=False))
+    print("  the three edge types, as emitted:")
+    for line in tex.splitlines():
+        if "/.style" in line and any(k in line for k in ("pmDirected", "pmBidirected", "pmCopath")):
+            print(f"    {line.strip()}")
+    print("    ^ one arrowhead / two arrowheads / NO arrowheads and thicker")
+    print()
+    print("  a co-path edge, and a directed one, for comparison:")
+    for line in tex.splitlines():
+        if "pmCopath," in line or "(g_m) -- " in line:
+            print(f"    {line.strip()}")
+    print()
+
+    chain = next(c for c in pm.WrightTracer(m).trace("g_m", "g_f") if c.crosses_copaths)
+    highlighted = to_tikz(m, layout=layout, highlight=chain,
+                          style=DiagramStyle(show_variances=False))
+    print("  highlighting one traced chain (the figure this project exists to make):")
+    print(f"    chain: {chain.path_string()}")
+    hot = [l for l in highlighted.splitlines() if "1F77B4" in l and "definecolor" not in l]
+    faded = [l for l in highlighted.splitlines() if "BBBBBB" in l and "definecolor" not in l]
+    print(f"    {len(hot)} edges emphasised, {len(faded)} faded, chain captioned beneath")
+    print()
+    print("  run `python examples/make_figures.py` to write docs/figures/ "
+          "(tikz + png + compiled pdf)")
+    print()
+
+
 if __name__ == "__main__":
     for model in (
         bivariate_regression(),
@@ -457,3 +508,4 @@ if __name__ == "__main__":
     engine_tour()
     tracer_tour()
     copath_tour()
+    rendering_tour()

@@ -1,0 +1,26 @@
+\definecolor{pmCB03A2E}{HTML}{B03A2E}
+\begin{tikzpicture}[
+  every node/.style={font=\small},
+  pmObserved/.style={draw=black, fill=white, rectangle, minimum width=0.85cm, minimum height=0.6cm, inner sep=1pt},
+  pmLatent/.style={draw=black, fill=white, ellipse, minimum width=0.85cm, minimum height=0.6cm, inner sep=1pt},
+  pmDirected/.style={->, line width=0.7pt},
+  pmBidirected/.style={<->, line width=0.7pt},
+  pmCopath/.style={line width=1.6pt},
+  pmLabel/.style={midway, fill=white, inner sep=1pt},
+]
+  \node[pmLatent] (g_m) at (0.000,0.000) {$g_m$};
+  \node[pmLatent] (e_m) at (1.700,0.000) {$e_m$};
+  \node[pmLatent] (g_f) at (5.100,0.000) {$g_f$};
+  \node[pmLatent] (e_f) at (6.800,0.000) {$e_f$};
+  \node[pmObserved] (y_m) at (0.850,-1.900) {$y_m$};
+  \node[pmObserved] (y_f) at (5.950,-1.900) {$y_f$};
+  \draw[pmDirected, draw=black] (g_m) -- (y_m);
+  \draw[pmDirected, draw=black] (e_m) -- (y_m);
+  \draw[pmDirected, draw=black] (g_f) -- (y_f);
+  \draw[pmDirected, draw=black] (e_f) -- (y_f);
+  \draw[pmBidirected, draw=black] (g_m) to[loop above, looseness=6, in=120, out=60] node[pmLabel] {$V_{A}$} (g_m);
+  \draw[pmBidirected, draw=black] (e_m) to[loop above, looseness=6, in=120, out=60] node[pmLabel] {$V_{E}$} (e_m);
+  \draw[pmBidirected, draw=black] (g_f) to[loop above, looseness=6, in=120, out=60] node[pmLabel] {$V_{A}$} (g_f);
+  \draw[pmBidirected, draw=black] (e_f) to[loop above, looseness=6, in=120, out=60] node[pmLabel] {$V_{E}$} (e_f);
+  \draw[pmCopath, draw=pmCB03A2E] (y_f) -- node[pmLabel] {$\frac{\rho_{y}}{V_{A} + V_{E}}$} (y_m);
+\end{tikzpicture}

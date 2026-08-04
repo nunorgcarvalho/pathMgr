@@ -47,8 +47,10 @@ src/pathmgr/
     tracing.py          Wright chain-enumeration engine ← WrightTracer, Decomposition
                         (also the SPECIFICATION for co-path semantics)
   render/               diagram output — never imported by core
-    tikz.py             TikZ export                              (task-…-151349)
-    raster.py           PNG/SVG export                           (task-…-151349)
+    layout.py           node placement: explicit coords + layered auto fallback
+    style.py            the drawing conventions, shared by both back ends
+    tikz.py             TikZ export + pdflatex compilation
+    raster.py           PNG/SVG/PDF via matplotlib (imported lazily)
   genetics/             the genetics layer, built on core
     pedigree.py         unroll generations into a path model     (task-…-151350)
     am.py               AM dynamics + equilibrium fixed point    (task-…-151351)
@@ -67,11 +69,13 @@ tests/
 scripts/
   profile_ram.py              RAM engine profile + the AM copath reference model
 examples/
-  spec_demo.py                runnable tour: both front-ends, engine, tracer
+  spec_demo.py                runnable tour: both front-ends, engine, tracer, co-paths
+  make_figures.py             produces docs/figures/ — including the highlighted chain
   am_equilibrium.pmg          the AM model as text, using a co-path
   am_equilibrium_handwritten.pmg   superseded encoding, kept as a regression fixture
 docs/
   profile_ram.md              measured timings + the assortment-representation trap
+  figures/                    generated diagrams (tikz + png + pdf)
 ```
 
 ## The specification API
@@ -209,7 +213,10 @@ within a leg it cannot, which in a DAG is automatic. `Chain.revisits` reports th
 that's what a reader hand-checking against a textbook will query.
 
 **Cyclic models cannot be traced** — a feedback loop has infinitely many chains. Raises
-`UntraceableModelError` pointing at `RAMEngine`, never silently truncating. Enumeration is also
+`UntraceableModelError` pointing at `RAMEngine`, never silently truncating. Since co-paths compose
+with the inverse fallback too, **`RAMEngine` strictly dominates `WrightTracer` in capability**: any
+model the tracer handles, the engine handles, and it also handles cyclic and cyclic-with-co-path
+models the tracer cannot. What the tracer alone gives is the *decomposition*. Enumeration is also
 capped by `max_chains` (`ChainLimitError`) so a wide lattice fails loudly instead of hanging.
 
 ## Co-paths (assortative mating)
@@ -266,6 +273,51 @@ same co-path, adding `rho_y^3 V_P + rho_y^5 V_P + ...` on a single mated pair
 nobody "simplifies" the enumeration into a matrix inverse later. Restricted to distinct
 co-paths the sum is a simple-walk enumeration, which has no closed form in general — hence
 `CoPathLimitError` rather than a silent truncation.
+
+## Rendering
+
+```python
+from pathmgr.render import to_tikz, to_standalone, write_pdf, to_image, Layout, DiagramStyle
+
+to_tikz(model, layout=Layout({"y_m": (0, 0), ...}))   # snippet to paste into a writeup
+write_pdf(model, "fig.pdf")                            # compiles it (pdflatex)
+to_image(model, "fig.png", legend=True)                # matplotlib: png / svg / pdf
+to_tikz(model, highlight=chain)                        # ONE traced chain, emphasised + captioned
+```
+
+**The three edge types must be visually unmistakable**, and that is a correctness concern, not a
+cosmetic one: a reader who takes a co-path for a covariance arrow applies the wrong tracing rules
+and gets a wrong answer by hand. So the co-path differs on three axes at once and stays
+distinguishable in greyscale:
+
+| edge | shape | arrowheads | weight |
+|---|---|---|---|
+| directed `a -> b` | straight | one | thin |
+| bidirected `a <-> b` | **curved** | **two** | thin |
+| co-path `a -- b` | straight | **none** | **thick, own colour** |
+
+`to_image(..., legend=True)` draws a key. A variance is a self-loop, suppressible with
+`DiagramStyle(show_variances=False)`.
+
+**Highlighting a traced chain is the figure this project exists to produce** — the diagram and
+the covariance in one object. Pass any `Chain` from the tracer; its edges are emphasised, the rest
+faded, and the chain's own `tex_path()` becomes the caption. `examples/make_figures.py` produces
+it for the allele-level model, where the highlighted chain *is* the proof that a co-path reaches
+the causes.
+
+**Layout**: explicit coordinates are the reliable path and what pedigrees should use
+(`pedigree_layout` takes a generation per individual). The layered auto fallback exists so an
+arbitrary model renders at all — its bar is "legible and correct", and it does one barycentre pass
+to cut edge crossings. Do not sink time into making it beautiful.
+
+**Dependencies, deliberately minimal.** The TikZ output needs only `tikz` + `shapes.geometric` +
+`xcolor`. It does **not** use `arrows.meta` or `standalone.cls`, both of which are absent from a
+plain TinyTeX install — arrowheads are TikZ's built-in `->`/`<->` and `to_standalone` defaults to
+`article` with the page sized to the drawing. Colours are emitted as `\definecolor` declarations,
+because a raw `#RRGGBB` in TikZ trips `Illegal parameter number` (`#` is a TeX special).
+`write_pdf` calls `pdflatex` directly, not `latexmk`, since the system perl on compute nodes is
+incomplete and breaks it. matplotlib is an optional extra (`pip install -e ".[render]"`) imported
+lazily, so `import pathmgr` never needs a drawing dependency — a test asserts that.
 
 ## The correctness property — do not let this rot
 
