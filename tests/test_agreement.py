@@ -80,7 +80,11 @@ def test_chain_factors_multiply_to_the_contribution(name):
 
 def test_the_battery_is_not_accidentally_empty():
     """A guard on the guard: this property is worthless if the battery silently shrinks."""
-    assert len(MODELS) >= 15
+    assert len(MODELS) >= 20
     assert any("AM" in name for name in MODELS)
     assert any(model.latent for model in MODELS.values())
     assert any(model.units.is_standardized for model in MODELS.values())
+    # co-paths must be represented, and by more than one mating process, or the
+    # multi-co-path composition rule would go unexercised by this property
+    assert any(model.has_copaths for model in MODELS.values())
+    assert any(len(model.mating_processes) >= 2 for model in MODELS.values())

@@ -71,6 +71,38 @@ class BidirectedEdge:
         return f"{self.a} {arrow} {self.b}  [{self.value}]"
 
 
+@dataclass(frozen=True)
+class CoPath:
+    """``a -- b``: covariance attributable to **matching**, not to a common cause.
+
+    A third edge type, distinct from both arrows. Following Sunde et al. 2025 Nat Commun
+    (Supplementary Note 1), a co-path "denotes covariance attributable to matching (e.g.
+    assortative mating) where covariance is induced **without causing variance**". The
+    consequence that makes it irreducible to a bidirected edge: matching "will induce
+    correlations in all the causes of the variables that are matched", so the association
+    propagates *backward* up the graph, which an ``S`` entry cannot do.
+
+    ``coefficient`` is **not** the correlation. Sunde's Eq. (1) is
+    ``Cov[a, b] = mu * Var[a] * Var[b]``, so a target correlation ``rho`` between unit-variance
+    variables needs ``mu = rho``, but between variables of variance ``V_P`` it needs
+    ``mu = rho / V_P`` -- generation-indexed under assortment, since ``V_P`` grows.
+
+    ``process`` names the **mating process** this co-path belongs to. A chain may not use two
+    co-paths from the same process (Sunde, Supplementary Note 3: "a chain cannot include
+    multiple co-path coefficients stemming from the same mating process"). One couple may carry
+    several co-paths -- Sunde use four per mating process for cross-trait assortment -- which is
+    why the process is named separately from the endpoints.
+    """
+
+    a: str
+    b: str
+    coefficient: sp.Expr
+    process: str
+
+    def __str__(self) -> str:
+        return f"{self.a} -- {self.b}  [{self.coefficient}]  (process {self.process})"
+
+
 @dataclass
 class ModelIssue:
     """One problem found by :meth:`Model.validate`."""
@@ -97,6 +129,7 @@ class Model:
         self._vars: dict[str, Variable] = {}
         self._directed: dict[tuple[str, str], DirectedEdge] = {}
         self._bidirected: dict[tuple[str, str], BidirectedEdge] = {}
+        self._copaths: dict[tuple[str, str, str], CoPath] = {}
         self.symbols = SymbolRegistry()
         self._assumptions: list[sp.Eq] = []
         self._revision = 0
@@ -186,6 +219,46 @@ class Model:
     def add_variance(self, name: str, value) -> "Model":
         """Shorthand for ``add_cov(name, name, value)``."""
         return self.add_cov(name, name, value)
+
+    def add_copath(self, a: str, b: str, coefficient, process: str | None = None) -> "Model":
+        """Add a co-path ``a -- b``: covariance from **matching**, not from a common cause.
+
+        See :class:`CoPath`. ``coefficient`` is not the correlation -- for variables of variance
+        ``V`` a target correlation ``rho`` needs ``rho / V``. ``process`` names the mating
+        process; it defaults to the pair itself, which is right unless one couple carries
+        several co-paths (cross-trait assortment), in which case name it explicitly so the
+        "one co-path per mating process per chain" rule can see they belong together.
+        """
+        self._require(a, b)
+        if a == b:
+            raise ValueError(
+                f"a co-path joins two variables; {a!r} -- {a!r} is not meaningful. A co-path "
+                f"induces covariance without causing variance, so it has no self form."
+            )
+        first, second = (a, b) if a <= b else (b, a)
+        resolved = process if process is not None else f"{first}--{second}"
+        key = (first, second, resolved)
+        if key in self._copaths:
+            raise ValueError(
+                f"co-path {a!r} -- {b!r} in process {resolved!r} already specified as "
+                f"{self._copaths[key].coefficient}; remove it first"
+            )
+        self._copaths[key] = CoPath(first, second, self.expr(coefficient), resolved)
+        self._touch()
+        return self
+
+    def remove_copath(self, a: str, b: str, process: str | None = None) -> "Model":
+        first, second = (a, b) if a <= b else (b, a)
+        resolved = process if process is not None else f"{first}--{second}"
+        del self._copaths[(first, second, resolved)]
+        self._touch()
+        return self
+
+    def copath_value(self, a: str, b: str, process: str | None = None) -> sp.Expr | None:
+        first, second = (a, b) if a <= b else (b, a)
+        resolved = process if process is not None else f"{first}--{second}"
+        edge = self._copaths.get((first, second, resolved))
+        return None if edge is None else edge.coefficient
 
     def remove_path(self, src: str, dst: str) -> "Model":
         del self._directed[(src, dst)]
@@ -289,6 +362,22 @@ class Model:
         return tuple(self._bidirected.values())
 
     @property
+    def copaths(self) -> tuple[CoPath, ...]:
+        return tuple(self._copaths.values())
+
+    @property
+    def has_copaths(self) -> bool:
+        return bool(self._copaths)
+
+    @property
+    def mating_processes(self) -> tuple[str, ...]:
+        """Distinct mating-process identifiers, in first-appearance order."""
+        seen: dict[str, None] = {}
+        for edge in self._copaths.values():
+            seen.setdefault(edge.process, None)
+        return tuple(seen)
+
+    @property
     def revision(self) -> int:
         """Increments on every structural change; engines key their caches on it."""
         return self._revision
@@ -390,6 +479,7 @@ class Model:
                 ModelIssue("warning", "directed cycle: " + " -> ".join(cyc))
             )
         issues.extend(self._check_disturbance_covariances())
+        issues.extend(self._check_copaths())
         if self.units.is_standardized:
             for n in self.exogenous:
                 v = self.cov_value(n, n)
@@ -453,6 +543,45 @@ class Model:
                     )
         return issues
 
+    def _check_copaths(self) -> list[ModelIssue]:
+        """Catch the two cheap ways a co-path and a bidirected edge get confused.
+
+        The general case is undecidable from structure alone -- a co-path between two roots is
+        exactly the legitimate founding-couple encoding, and looks identical to a bidirected
+        edge that someone typed with the wrong operator. But two patterns are worth flagging:
+
+        - **Both edge types on the same pair.** Almost always double-counting: the co-path
+          already induces the covariance the bidirected edge is stating by hand. This is the
+          mistake the superseded ``am_equilibrium_handwritten.pmg`` encoding made in reverse.
+        - **A co-path onto a variable with no incoming paths and no variance.** A co-path
+          contributes ``mu * Var[a] * Var[b]``, so if either endpoint has no variance of its own
+          and no causes, the co-path contributes nothing at all and is silently inert.
+        """
+        issues: list[ModelIssue] = []
+        for copath in self._copaths.values():
+            if self.cov_value(copath.a, copath.b) is not None:
+                issues.append(
+                    ModelIssue(
+                        "warning",
+                        f"{copath.a!r} and {copath.b!r} are joined by BOTH a co-path and a "
+                        f"bidirected edge. The co-path already induces covariance between them "
+                        f"and among all their causes, so stating it again by hand almost "
+                        f"certainly double-counts. Drop one.",
+                    )
+                )
+            for name in (copath.a, copath.b):
+                if not self.parents(name) and self.cov_value(name, name) is None:
+                    issues.append(
+                        ModelIssue(
+                            "warning",
+                            f"co-path '{copath.a} -- {copath.b}' touches {name!r}, which has no "
+                            f"variance and no causes. A co-path contributes "
+                            f"mu * Var[{copath.a}] * Var[{copath.b}], so this one contributes "
+                            f"nothing.",
+                        )
+                    )
+        return issues
+
     # -- copying ----------------------------------------------------------------------
     def copy(self, name: str | None = None) -> "Model":
         """An independent copy, for branching a model without disturbing the original."""
@@ -460,6 +589,7 @@ class Model:
         new._vars = dict(self._vars)
         new._directed = dict(self._directed)
         new._bidirected = dict(self._bidirected)
+        new._copaths = dict(self._copaths)
         new.symbols = self.symbols.copy()
         new._assumptions = list(self._assumptions)
         new._revision = self._revision
@@ -490,6 +620,9 @@ class Model:
         lines += [f"    {e}" for e in self._directed.values()]
         lines.append(f"  covariances ({len(self._bidirected)}):")
         lines += [f"    {e}" for e in self._bidirected.values()]
+        if self._copaths:
+            lines.append(f"  co-paths ({len(self._copaths)}):")
+            lines += [f"    {e}" for e in self._copaths.values()]
         if self._assumptions:
             lines.append(f"  assumptions ({len(self._assumptions)}):")
             lines += [f"    {sp.pretty(eq, use_unicode=False)}" for eq in self._assumptions]
@@ -499,6 +632,7 @@ class Model:
         return (
             f"<Model {self.name!r} vars={len(self._vars)} "
             f"paths={len(self._directed)} covs={len(self._bidirected)} "
+            f"copaths={len(self._copaths)} "
             f"units={self.units.kind} rev={self._revision}>"
         )
 

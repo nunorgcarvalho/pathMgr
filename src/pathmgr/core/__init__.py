@@ -8,13 +8,20 @@
 - :mod:`.tracing` -- Wright chain enumeration engine: the covariance DECOMPOSITION
 """
 
-from .model import BidirectedEdge, DirectedEdge, Model, ModelIssue, Variable
-from .ram import CovarianceReport, CyclicModelError, RAMEngine, SingularModelError
+from .model import BidirectedEdge, CoPath, DirectedEdge, Model, ModelIssue, Variable
+from .ram import (
+    CoPathLimitError,
+    CovarianceReport,
+    CyclicModelError,
+    RAMEngine,
+    SingularModelError,
+)
 from .symbols import SymbolRegistry
 from .tracing import (
     Chain,
     ChainLimitError,
     Decomposition,
+    Segment,
     UntraceableModelError,
     WrightTracer,
 )
@@ -25,6 +32,8 @@ __all__ = [
     "BidirectedEdge",
     "Chain",
     "ChainLimitError",
+    "CoPath",
+    "CoPathLimitError",
     "CovarianceReport",
     "CyclicModelError",
     "Decomposition",
@@ -33,6 +42,7 @@ __all__ = [
     "ModelIssue",
     "RAMEngine",
     "SingularModelError",
+    "Segment",
     "SymbolRegistry",
     "TextSyntaxError",
     "UntraceableModelError",

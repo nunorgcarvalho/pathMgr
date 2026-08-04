@@ -45,6 +45,7 @@ src/pathmgr/
     text.py             text front-end: from_text / to_text, a thin layer over the builder
     ram.py              closed-form covariance engine  ← RAMEngine
     tracing.py          Wright chain-enumeration engine ← WrightTracer, Decomposition
+                        (also the SPECIFICATION for co-path semantics)
   render/               diagram output — never imported by core
     tikz.py             TikZ export                              (task-…-151349)
     raster.py           PNG/SVG export                           (task-…-151349)
@@ -61,12 +62,14 @@ tests/
   test_tracing.py             tracer: enumeration, decomposition, LaTeX, limits
   test_validation_models.py   two hand-encoded models, checked to round-trip
   test_am_spec_spike.py       AM unit vs. the writeup's boxed results
+  test_copath.py              co-paths: Sunde's rules, the allele-level decisive test
   test_relative_covariance_section1.py   Section 1 derived by the engine
 scripts/
   profile_ram.py              RAM engine profile + the AM copath reference model
 examples/
   spec_demo.py                runnable tour: both front-ends, engine, tracer
-  am_equilibrium.pmg          the AM model as a standalone text file
+  am_equilibrium.pmg          the AM model as text, using a co-path
+  am_equilibrium_handwritten.pmg   superseded encoding, kept as a regression fixture
 docs/
   profile_ram.md              measured timings + the assortment-representation trap
 ```
@@ -92,6 +95,8 @@ Conventions, all load-bearing:
 
 - **Directed edge** `a -> b` with coefficient `c` means *`b` regresses on `a`*, and becomes
   `A[b, a] = c`.
+- **Co-path** `a -- b` is covariance from **matching**, a third edge type — see the co-path
+  section below. Not interchangeable with a bidirected edge in either direction.
 - **Bidirected edge** `a <-> b` is a **disturbance** covariance, `S[a, b] = S[b, a]`. On an
   exogenous variable `a <-> a` is its variance; on an **endogenous** variable it is the
   *residual* variance — never the total, which the model implies rather than states. This
@@ -128,6 +133,9 @@ g_c ~ ((1 + rho_g)/2)*g_p              # parenthesise a compound coefficient
 
 x1  ~~ V_1*x1                          # a variance
 g_i ~~ (V_A*pi_ij)*g_j                 # a covariance, expression value
+
+y_m -- mu*y_f                          # a co-path (matching); see the co-path section
+S_m -- mu2*Sx_p [couple0]              # [name] names the mating process
 ```
 
 Directives may appear in any order (they are all processed before the equations), so a
@@ -203,6 +211,52 @@ that's what a reader hand-checking against a textbook will query.
 **Cyclic models cannot be traced** — a feedback loop has infinitely many chains. Raises
 `UntraceableModelError` pointing at `RAMEngine`, never silently truncating. Enumeration is also
 capped by `max_chains` (`ChainLimitError`) so a wide lattice fails loudly instead of hanging.
+
+## Co-paths (assortative mating)
+
+A **third edge type**, distinct from both arrows, following Sunde et al. 2025 Nat Commun
+(Supplementary Notes 1 and 3 — in `~/thesisMgr/corpus/literature/`, read-only, and the authority
+here). A co-path denotes covariance attributable to **matching**, inducing covariance *without
+causing variance*.
+
+```python
+m.add_copath("y_m", "y_f", "mu")                      # process defaults to the pair
+m.add_copath("S_m", "Sx_f", "mu_prime", process="couple0")   # cross-trait: same process
+```
+```
+y_m -- mu*y_f                    # text grammar: an arrowless line
+S_m -- mu2*Sx_p [couple0]        # [name] names the mating process
+```
+
+**Why it is not a bidirected edge, and cannot be emulated by one.** Matching induces correlation
+among *all the causes* of the matched variables, so the association propagates **backward** up
+the graph. An `S` entry is a disturbance covariance and does not. So `S[y_m, y_f] = c` gets
+`Cov[y_m, y_f]` right and `Cov[g_m, g_f] = 0`. The decisive check, in `tests/test_copath.py`:
+split each parent's `g` into allele nodes and confirm
+`Cov[z_mat_m, z_mat_f] = beta^2 rho_y / (4 V_P)` **without it being specified**. A bidirected
+edge gives 0 there.
+
+**The coefficient is not the correlation.** Sunde Eq. (1) is `Cov[a,b] = mu Var[a] Var[b]`, so a
+target phenotypic correlation `rho_y` needs `mu = rho_y / V_P` — **generation-indexed**, because
+`V_P` grows under assortment. With `V_P = 1` in the base generation `mu = rho_y` and every
+first-generation test passes while later ones are wrong by a power of `V_P`.
+
+**Tracing rules.** A chain is `[segment] -- [segment] -- ...`, each segment a standard valid
+chain. A chain cannot start or end with a co-path, and may use **at most one co-path per mating
+process**. Co-paths from *different* processes may combine, and must — that is what accumulates
+`((1+rho_g)/2)^d` across generations. Implementing "one co-path per chain" would silently
+truncate every multi-generation result to first order in `rho_g`.
+
+**The RAM form.** Bundling each leg into a `Sigma_0` entry, a co-path sequence contributes a
+scalar times an **outer product** of one `Sigma_0` column and one `Sigma_0` row — which is
+exactly why it reaches the causes, where a bidirected edge contributes `B` columns instead. The
+engine sums over sequences of distinct-process co-paths, pruning wherever the connecting
+`Sigma_0` entry is zero. **`Sigma_0 (I - C Sigma_0)^-1` is NOT the closed form**: it re-uses the
+same co-path, adding `rho_y^3 V_P + rho_y^5 V_P + ...` on a single mated pair
+(0.3495 against the correct 0.3180). `test_the_geometric_series_form_overcounts` pins that, so
+nobody "simplifies" the enumeration into a matrix inverse later. Restricted to distinct
+co-paths the sum is a simple-walk enumeration, which has no closed form in general — hence
+`CoPathLimitError` rather than a silent truncation.
 
 ## The correctness property — do not let this rot
 

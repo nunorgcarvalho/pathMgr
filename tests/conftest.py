@@ -34,5 +34,8 @@ def canonical(model: pm.Model) -> dict:
         "labels": {v.name: v.label for v in model.variables if v.label is not None},
         "paths": frozenset((e.src, e.dst, sp.srepr(e.coeff)) for e in model.directed_edges),
         "covs": frozenset((e.a, e.b, sp.srepr(e.value)) for e in model.bidirected_edges),
+        "copaths": frozenset(
+            (c.a, c.b, c.process, sp.srepr(c.coefficient)) for c in model.copaths
+        ),
         "assumptions": frozenset(sp.srepr(eq) for eq in model.assumptions),
     }

@@ -197,17 +197,51 @@ def random_recursive(seed: int, n: int = 7) -> pm.Model:
 # ======================================================================================
 def _imported_models() -> dict[str, pm.Model]:
     """Models defined by the tasks that introduced them, so there is one definition each."""
-    from profile_ram import lineage  # scripts/profile_ram.py -- the AM copath encoding
+    from profile_ram import lineage  # scripts/profile_ram.py -- the directed AM encoding
     from test_am_spec_spike import am_pair_with_two_children
+    from test_copath import allele_level_pair, mated_pair, shared_partner
     from test_validation_models import bivariate_regression, relative_covariance_section1
 
+    root = Path(__file__).resolve().parent.parent
     return {
         "bivariate regression": bivariate_regression(),
         "relative covariance S1": relative_covariance_section1(),
         "AM pair + two sibs": am_pair_with_two_children(),
         "AM lineage depth 1": lineage(1),
         "AM lineage depth 2": lineage(2),
+        # co-paths (task-20260804-173343)
+        "co-path mated pair": mated_pair(),
+        "co-path allele level": allele_level_pair(),
+        "co-path shared partner": shared_partner(),
+        "co-path AM example": pm.from_text(
+            (root / "examples" / "am_equilibrium.pmg").read_text(), name="AM co-path"
+        ),
+        "AM handwritten (superseded)": pm.from_text(
+            (root / "examples" / "am_equilibrium_handwritten.pmg").read_text(),
+            name="AM handwritten",
+        ),
     }
+
+
+def copath_chain_of_three() -> pm.Model:
+    """Three couples in a row, so chains must cross up to three distinct mating processes."""
+    m = pm.Model("co-path chain of three", units=pm.Units.unstandardized())
+    for v in ("V_A", "V_E"):
+        m.declare(v, positive=True)
+    V_A, V_E, rho_y = (m.sym(s) for s in ("V_A", "V_E", "rho_y"))
+    mu = rho_y / (V_A + V_E)
+    people = ("a", "b", "c", "d")
+    for who in people:
+        m.add_var(f"g_{who}", latent=True)
+        m.add_var(f"e_{who}", latent=True)
+        m.add_var(f"y_{who}")
+        m.add_path(f"g_{who}", f"y_{who}", 1)
+        m.add_path(f"e_{who}", f"y_{who}", 1)
+        m.add_variance(f"g_{who}", V_A)
+        m.add_variance(f"e_{who}", V_E)
+    for i, (left, right) in enumerate(zip(people, people[1:])):
+        m.add_copath(f"y_{left}", f"y_{right}", mu, process=f"couple{i}")
+    return m
 
 
 def all_models() -> dict[str, pm.Model]:
@@ -221,6 +255,7 @@ def all_models() -> dict[str, pm.Model]:
         "turning point": turning_point_with_ancestors(),
         "diamond": diamond(),
         "standardized regression": standardized_regression(),
+        "co-path chain of three": copath_chain_of_three(),
     }
     models.update(_imported_models())
     for seed in range(4):

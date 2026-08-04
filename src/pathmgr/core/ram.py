@@ -61,6 +61,7 @@ from .model import Model
 from .units import Units
 
 __all__ = [
+    "CoPathLimitError",
     "CovarianceReport",
     "CyclicModelError",
     "RAMEngine",
@@ -77,6 +78,10 @@ class SingularModelError(ValueError):
 
 class CyclicModelError(ValueError):
     """A topological order was requested for a model with a directed cycle."""
+
+
+class CoPathLimitError(ValueError):
+    """Too many distinct co-path sequences to enumerate; the result would be incomplete."""
 
 
 @dataclass
@@ -116,10 +121,24 @@ class RAMEngine:
     V_r + V_x*b**2
     """
 
-    def __init__(self, model: Model, auto_expand: bool = True):
+    #: refuse to enumerate more than this many co-path sequences when building Sigma
+    DEFAULT_MAX_COPATH_SEQUENCES = 20_000
+
+    def __init__(
+        self,
+        model: Model,
+        auto_expand: bool = True,
+        max_copath_sequences: int | None = None,
+    ):
         self.model = model
         #: expand each entry as it is built. Off only for profiling comparisons.
         self.auto_expand = auto_expand
+        self.max_copath_sequences = (
+            self.DEFAULT_MAX_COPATH_SEQUENCES
+            if max_copath_sequences is None
+            else max_copath_sequences
+        )
+        self._copath_sequences = 0
         self._revision: int | None = None
         self._sigma: sp.Matrix | None = None
         self._order: tuple[str, ...] = ()
@@ -266,7 +285,93 @@ class RAMEngine:
         else:
             self._sigma = self._sigma_via_inverse(A, S)
             self._used_inverse = True
+        if self.model.has_copaths and order:
+            self._sigma = self._apply_copaths(self._sigma)
         self._revision = self.model.revision
+
+    def _apply_copaths(self, sigma0: sp.Matrix) -> sp.Matrix:
+        """Add every co-path chain's contribution to the co-path-free ``sigma0``.
+
+        Derivation. A chain crossing co-paths ``c_1 ... c_k`` in order is a sequence of standard
+        segments joined by those co-paths. Summing over all segment choices bundles each leg
+        into a ``sigma0`` entry, so the whole family of chains crossing that particular co-path
+        sequence contributes
+
+            sigma0[:, u_1] * (mu_1 sigma0[v_1, u_2] mu_2 ... mu_k) * sigma0[v_k, :]
+
+        -- a scalar times an **outer product** of one ``sigma0`` column and one ``sigma0`` row.
+        Being built from ``sigma0`` columns is exactly why a co-path reaches a matched
+        variable's *causes*, which a bidirected edge cannot: an ``S`` entry contributes
+        ``B[:, u] s B[:, v]^T``, using path columns rather than covariance columns.
+
+        Each co-path is traversed in either orientation, and by Sunde's rule the sequence may
+        use **at most one co-path per mating process**. So the sum runs over ordered sequences
+        of distinct-process co-paths, which is finite. It is enumerated depth-first and pruned
+        wherever the connecting ``sigma0[v_i, u_{i+1}]`` is zero -- in practice that kills the
+        overwhelming majority of sequences, since consecutive co-paths must be linked by actual
+        covariance in the co-path-free model.
+
+        **Why there is no clean geometric-series closed form.** Allowing repeats would give
+        ``sigma0 (I - C sigma0)^-1`` with ``C`` holding the co-path coefficients, and that
+        overcounts. On a single mated pair with one co-path, expanding the series term by term
+        at the ``(y_m, y_f)`` entry gives
+
+            k=1:  rho_y V_P     <- the only Sunde-legal term
+            k=3:  rho_y^3 V_P   <- traverses the SAME co-path three times
+            k=5:  rho_y^5 V_P   <- ... and five times
+
+        summing to ``rho_y V_P / (1 - rho_y^2)`` instead of ``rho_y V_P`` (numerically 0.3495
+        against the correct 0.3180 at ``V_A = 0.46``, ``V_E = 0.6``, ``rho_y = 0.3``). The even
+        powers vanish here only because ``sigma0`` is block diagonal across the two partners;
+        that is incidental, not protective. Restricted to distinct co-paths the sum is a
+        simple-walk enumeration over the co-path graph, which has no closed form in general --
+        hence the explicit enumeration and the :class:`CoPathLimitError` guard.
+        """
+        index = self._index
+        oriented: list[tuple[str, int, int, sp.Expr]] = []
+        for copath in self.model.copaths:
+            if copath.coefficient == 0:
+                continue
+            for a, b in sorted({(copath.a, copath.b), (copath.b, copath.a)}):
+                oriented.append((copath.process, index[a], index[b], copath.coefficient))
+        if not oriented:
+            return sigma0
+
+        total = sigma0.as_mutable()
+        self._copath_sequences = 0
+
+        def extend(left: int, far: int, used: frozenset[str], scalar: sp.Expr) -> None:
+            self._copath_sequences += 1
+            if self._copath_sequences > self.max_copath_sequences:
+                raise CoPathLimitError(
+                    f"more than {self.max_copath_sequences} co-path sequences while building "
+                    f"Sigma; the result would be incomplete. The count grows with the number "
+                    f"of mating processes that are linked by nonzero covariance. Raise "
+                    f"max_copath_sequences if you can afford it."
+                )
+            column = sigma0[:, left]
+            row = sigma0[far, :]
+            for i in range(total.rows):
+                if column[i] == 0:
+                    continue
+                weight = self._norm(scalar * column[i])
+                if weight == 0:
+                    continue
+                for j in range(total.cols):
+                    if row[j] == 0:
+                        continue
+                    total[i, j] = self._norm(total[i, j] + weight * row[j])
+            for process, near2, far2, mu2 in oriented:
+                if process in used:
+                    continue  # one co-path per mating process per chain
+                link = sigma0[far, near2]
+                if link == 0:
+                    continue
+                extend(left, far2, used | {process}, self._norm(scalar * link * mu2))
+
+        for process, near, far, mu in oriented:
+            extend(near, far, frozenset({process}), mu)
+        return total.as_immutable()
 
     def _sigma_recursive(self, A: sp.Matrix, S: sp.Matrix, order: tuple[str, ...]) -> sp.Matrix:
         """Two topological sweeps; no matrix inverse is ever formed. See module docstring."""

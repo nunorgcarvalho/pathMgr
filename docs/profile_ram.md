@@ -12,25 +12,14 @@ partners correlate at `rho_y`, before any timing is taken.
 
 | generations | nodes | build Sigma | cov() query | cov(form='simplified') | total ops in Sigma | worst entry |
 |---|---|---|---|---|---|---|
-| 1 | 13 | 0.008s | 0.0000s | 0.011s | 2152 | 97 |
-| 2 | 20 | 0.015s | 0.0000s | 0.017s | 7141 | 175 |
-| 3 | 27 | 0.024s | 0.0000s | 0.033s | 16976 | 256 |
-| 4 | 34 | 0.069s | 0.0000s | 0.036s | 35692 | 343 |
-| 5 | 41 | 0.102s | 0.0000s | 0.045s | 67453 | 445 |
-| 6 | 48 | 0.822s | 0.0000s | 0.053s | 119020 | 656 |
-| 7 | 55 | 1.143s | 0.0000s | 0.067s | 188843 | 866 |
-| 8 | 62 | 1.567s | 0.0000s | 0.072s | 285026 | 1004 |
-| 9 | 69 | 2.340s | 0.0000s | 0.079s | 424274 | 1401 |
-| 10 | 76 | 2.792s | 0.0000s | 0.082s | 608660 | 1741 |
-| 11 | 83 | 10.829s | 0.0000s | 0.085s | 836982 | 1993 |
-| 12 | 90 | 14.892s | 0.0000s | 0.109s | 1116704 | 2306 |
-| 13 | 97 | 21.174s | 0.0046s | 0.106s | 1463241 | 2711 |
-| 14 | 104 | 30.402s | 0.0049s | 0.110s | 1887275 | 2987 |
+| 1 | 13 | 0.010s | 0.0000s | 0.011s | 2152 | 97 |
+| 2 | 20 | 0.015s | 0.0000s | 0.018s | 7141 | 175 |
+| 3 | 27 | 0.026s | 0.0000s | 0.026s | 16976 | 256 |
 
 ## Where it starts to hurt
 
-- Comfortable to **10 generations** (76 nodes): building Sigma stays under 3 s.
-- Past **11 generations** the build crosses 10 s and climbs steeply (depth 14: 30 s).
+- Comfortable to **3 generations** (27 nodes): building Sigma stays under 3 s.
+- No depth measured here crossed 10 s (deepest: 3 generations at 0.0 s).
 - Queries stay free at every depth, because Sigma is built once and cached.
 - If a future task needs materially more depth, the optimisation to reach for is a
   **targeted single-entry computation**: `cov(x, y)` currently forces the whole

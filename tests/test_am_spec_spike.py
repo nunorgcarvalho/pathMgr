@@ -32,7 +32,12 @@ import pathmgr as pm
 
 from conftest import canonical, ram_sigma
 
-AM_TEXT_FILE = Path(__file__).resolve().parent.parent / "examples" / "am_equilibrium.pmg"
+# The builder model below is the hand-written-covariance encoding, superseded by co-paths in
+# task-20260804-173343. Its text twin is therefore the handwritten fixture, not the live example.
+AM_TEXT_FILE = (
+    Path(__file__).resolve().parent.parent / "examples" / "am_equilibrium_handwritten.pmg"
+)
+AM_COPATH_FILE = Path(__file__).resolve().parent.parent / "examples" / "am_equilibrium.pmg"
 
 
 def am_pair_with_two_children() -> pm.Model:
@@ -77,13 +82,20 @@ def am_pair_with_two_children() -> pm.Model:
 def test_text_front_end_produces_the_identical_model():
     """The hardest equivalence check available: the full AM model, both ways.
 
-    ``examples/am_equilibrium.pmg`` is this same model in the text grammar. If the two
-    front-ends ever drift, this is where it shows up.
+    ``examples/am_equilibrium_handwritten.pmg`` is this same model in the text grammar. If the
+    two front-ends ever drift, this is where it shows up.
     """
     from_text = pm.from_text(AM_TEXT_FILE.read_text(), name="AM equilibrium: pair + two full sibs")
     assert canonical(from_text) == canonical(am_pair_with_two_children())
     # and it survives a round trip through to_text
     assert canonical(pm.from_text(from_text.to_text())) == canonical(from_text)
+
+
+def test_the_copath_encoding_round_trips_too():
+    """The live example uses a co-path; the text layer must carry that faithfully."""
+    model = pm.from_text(AM_COPATH_FILE.read_text())
+    assert model.has_copaths
+    assert canonical(pm.from_text(model.to_text())) == canonical(model)
 
 
 def test_am_model_is_structurally_sane():

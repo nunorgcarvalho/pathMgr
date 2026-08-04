@@ -2,6 +2,9 @@
 
     python examples/spec_demo.py
 
+Four sections: the specification object on three models, then the text front-end, the RAM
+engine, the Wright tracer, and co-paths.
+
 Three models of increasing awkwardness, chosen to exercise every part of the spec object:
 
 1. bivariate regression      -- the standard SEM smoke test; all observed
@@ -149,11 +152,19 @@ def text_front_end_tour() -> None:
     print("  matches the builder version:", _same(m, bivariate_regression()))
     print()
 
-    # loaded from a file, and round-tripped
-    from_file = pm.from_text((HERE / "am_equilibrium.pmg").read_text(), name="AM (from file)")
-    print("  loaded examples/am_equilibrium.pmg:", from_file)
+    # loaded from a file, and round-tripped. The builder twin below is the superseded
+    # hand-written-covariance encoding, so it is the *handwritten* fixture that matches it;
+    # am_equilibrium.pmg now uses a co-path (see the CO-PATHS section).
+    from_file = pm.from_text(
+        (HERE / "am_equilibrium_handwritten.pmg").read_text(), name="AM (from file)"
+    )
+    print("  loaded examples/am_equilibrium_handwritten.pmg:", from_file)
     print("  matches the builder version:", _same(from_file, am_transmission_unit_pair()))
     print("  survives to_text -> from_text:", _same(pm.from_text(from_file.to_text()), from_file))
+    copath_file = pm.from_text((HERE / "am_equilibrium.pmg").read_text(), name="AM (co-path)")
+    print("  loaded examples/am_equilibrium.pmg (co-path):", copath_file)
+    print("  survives to_text -> from_text:",
+          _same(pm.from_text(copath_file.to_text()), copath_file))
     print()
 
     # errors point at the line
@@ -209,6 +220,7 @@ def _same(a: pm.Model, b: pm.Model) -> bool:
             frozenset(m.latent),
             frozenset((e.src, e.dst, sp.srepr(e.coeff)) for e in m.directed_edges),
             frozenset((e.a, e.b, sp.srepr(e.value)) for e in m.bidirected_edges),
+            frozenset((c.a, c.b, c.process, sp.srepr(c.coefficient)) for c in m.copaths),
             frozenset(sp.srepr(eq) for eq in m.assumptions),
         )
 
@@ -336,6 +348,104 @@ def _indent(block: object, pad: str = "    ") -> str:
     return "\n".join(pad + line for line in str(block).splitlines())
 
 
+def copath_tour() -> None:
+    """Co-paths: covariance from matching, which a bidirected edge cannot express."""
+    print("=" * 78)
+    print("CO-PATHS  (assortative mating)")
+    print()
+
+    m = pm.from_text(
+        """
+        latent: g_m, e_m, g_f, e_f
+        positive: V_A, V_E
+        y_m ~ g_m + e_m
+        y_f ~ g_f + e_f
+        g_m ~~ V_A*g_m
+        e_m ~~ V_E*e_m
+        g_f ~~ V_A*g_f
+        e_f ~~ V_E*e_f
+        y_m -- (rho_y/(V_A + V_E))*y_f
+        """,
+        name="mated pair",
+    )
+    e = pm.RAMEngine(m)
+    V_A, V_E, rho_y = (m.sym(s) for s in ("V_A", "V_E", "rho_y"))
+    V_P = V_A + V_E
+    print("  ONE co-path on the phenotypes induces covariance among ALL the causes:")
+    for x, y in [("y_m", "y_f"), ("g_m", "g_f"), ("e_m", "g_f"), ("e_m", "e_f")]:
+        print(f"    Cov[{x}, {y}] = {sp.factor(sp.simplify(e.cov(x, y)))}")
+    print(f"    ... and Cov[y_m,y_f] == rho_y*V_P: "
+          f"{sp.simplify(e.cov('y_m', 'y_f') - rho_y * V_P) == 0}")
+    print("    none of the cause-level covariances were specified.")
+    print()
+    print("  the decomposition is exactly Sunde's Eq. (2):")
+    print(_indent(pm.WrightTracer(m).trace("y_m", "y_f")))
+    print()
+
+    print("  a co-path induces covariance WITHOUT causing variance:")
+    without = m.copy()
+    without.remove_copath("y_m", "y_f")
+    same = all(
+        sp.simplify(e.var(n) - pm.RAMEngine(without).var(n)) == 0 for n in m.names
+    )
+    print(f"    every variance unchanged by adding the co-path: {same}")
+    print()
+
+    print("  the decisive contrast -- split g into alleles, g = beta*(z_mat + z_pat):")
+    allele = pm.from_text(
+        """
+        latent: z_mat_m, z_pat_m, g_m, e_m, z_mat_f, z_pat_f, g_f, e_f
+        positive: beta, V_E
+        g_m ~ beta*z_mat_m + beta*z_pat_m
+        g_f ~ beta*z_mat_f + beta*z_pat_f
+        y_m ~ g_m + e_m
+        y_f ~ g_f + e_f
+        z_mat_m ~~ 1/2*z_mat_m
+        z_pat_m ~~ 1/2*z_pat_m
+        z_mat_f ~~ 1/2*z_mat_f
+        z_pat_f ~~ 1/2*z_pat_f
+        e_m ~~ V_E*e_m
+        e_f ~~ V_E*e_f
+        y_m -- (rho_y/(beta**2 + V_E))*y_f
+        """,
+        name="allele level",
+    )
+    ea = pm.RAMEngine(allele)
+    beta, V_E2, ry2 = (allele.sym(s) for s in ("beta", "V_E", "rho_y"))
+    print(f"    co-path      -> Cov[z_mat_m, z_mat_f] = "
+          f"{sp.factor(sp.simplify(ea.cov('z_mat_m', 'z_mat_f')))}")
+    faked = allele.copy()
+    faked.remove_copath("y_m", "y_f")
+    faked.add_cov("y_m", "y_f", ry2 * (beta**2 + V_E2))
+    print(f"    bidirected   -> Cov[z_mat_m, z_mat_f] = "
+          f"{pm.RAMEngine(faked).cov('z_mat_m', 'z_mat_f')}   <- the whole point")
+    print()
+
+    print("  chains may cross co-paths from DIFFERENT mating processes (but not the same one):")
+    shared = pm.from_text(
+        """
+        latent: g_1, e_1, g_P, e_P, g_2, e_2
+        positive: V_A, V_E
+        y_1 ~ g_1 + e_1
+        y_P ~ g_P + e_P
+        y_2 ~ g_2 + e_2
+        g_1 ~~ V_A*g_1
+        g_P ~~ V_A*g_P
+        g_2 ~~ V_A*g_2
+        e_1 ~~ V_E*e_1
+        e_P ~~ V_E*e_P
+        e_2 ~~ V_E*e_2
+        y_1 -- (rho_y/(V_A + V_E))*y_P [couple_1P]
+        y_2 -- (rho_y/(V_A + V_E))*y_P [couple_2P]
+        """,
+        name="shared partner",
+    )
+    print(_indent(pm.WrightTracer(shared).trace("g_1", "g_2")))
+    print("    (two people who each mated with the same third person are correlated,")
+    print("     with no shared ancestry at all -- and this is why half-sibs break (1+rho_g)^d)")
+    print()
+
+
 if __name__ == "__main__":
     for model in (
         bivariate_regression(),
@@ -346,3 +456,4 @@ if __name__ == "__main__":
     text_front_end_tour()
     engine_tour()
     tracer_tour()
+    copath_tour()

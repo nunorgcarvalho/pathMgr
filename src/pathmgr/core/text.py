@@ -30,6 +30,16 @@ Directed paths -- ``dst ~ terms``, read as "dst regresses on ..."::
     g_o ~ 1/2*g_m + 1/2*g_f + s_o              # exact rationals, not floats
     g_c ~ ((1 + rho_g)/2)*g_p                  # parenthesise a compound coefficient
 
+Co-paths -- ``a -- terms``, covariance from matching (Sunde's arrowless line)::
+
+    y_m -- mu*y_f                              # a co-path; mu is NOT the correlation
+    S_m -- mu*S_p [couple0]                    # name the mating process explicitly
+    S_m -- (mu_prime)*Sx_p [couple0]           # a second co-path on the SAME process
+
+The trailing ``[name]`` names the mating process, defaulting to the pair itself. It only
+matters when one couple carries several co-paths (cross-trait assortment), because a chain may
+not use two co-paths from the same process.
+
 Bidirected covariances -- ``a ~~ terms``, disturbance covariances (see
 :mod:`pathmgr.core.model` for why these are residual, not total, on endogenous variables)::
 
@@ -65,6 +75,7 @@ __all__ = ["from_text", "to_text", "TextSyntaxError"]
 _DIRECTIVES = ("units", "latent", "observed", "positive", "real", "integer", "label", "assume")
 _ASSUMPTION_DIRECTIVES = ("positive", "real", "integer")
 _NAME_RE = re.compile(r"^[A-Za-z_]\w*$")
+_PROCESS_RE = re.compile(r"\[(?P<process>[^\]]*)\]\s*$")
 _TERM_RE = re.compile(r"^\s*(?P<coeff>.*\*)?\s*(?P<var>[A-Za-z_]\w*)\s*$")
 
 
@@ -145,6 +156,14 @@ def from_text(text: str, name: str | None = None) -> Model:
                 lineno, line, f"left-hand side {lhs!r} must be a single variable name"
             )
         _ensure_var(model, lhs, latent, labels)
+        process = None
+        if op == "--":
+            match = _PROCESS_RE.search(rhs)
+            if match:
+                process = match.group("process").strip()
+                rhs = rhs[: match.start()].strip()
+                if not process:
+                    raise TextSyntaxError(lineno, line, "empty mating-process name in [...]")
         for term in _split_terms(rhs, lineno, line):
             coeff_text, var_name = _split_term(term, lineno, line)
             _ensure_var(model, var_name, latent, labels)
@@ -158,8 +177,10 @@ def from_text(text: str, name: str | None = None) -> Model:
             try:
                 if op == "~":
                     model.add_path(var_name, lhs, coeff)
-                else:
+                elif op == "~~":
                     model.add_cov(lhs, var_name, coeff)
+                else:
+                    model.add_copath(lhs, var_name, coeff, process=process)
             except ValueError as exc:
                 raise TextSyntaxError(lineno, line, str(exc)) from exc
 
@@ -233,17 +254,22 @@ def _names(rest: str, lineno: int, line: str) -> list[str]:
 
 def _split_equation(line: str, lineno: int) -> tuple[str, str, str]:
     """Return ``(op, lhs, rhs)`` where op is ``'~~'`` or ``'~'``. ``~~`` is checked first."""
-    for op in ("~~", "~"):
-        if op in line:
-            lhs, _, rhs = line.partition(op)
-            lhs, rhs = lhs.strip(), rhs.strip()
-            if not lhs or not rhs:
-                raise TextSyntaxError(lineno, line, f"'{op}' needs both a left and right side")
-            return op, lhs, rhs
+    # Pick the operator that appears EARLIEST, so a coefficient containing '--' (e.g.
+    # `y ~ (a--b)*x`) cannot be mistaken for a co-path line. At the same position, the longer
+    # operator wins, so '~~' beats '~'.
+    candidates = [(line.find(op), -len(op), op) for op in ("--", "~~", "~") if op in line]
+    if candidates:
+        _, _, op = min(candidates)
+        lhs, _, rhs = line.partition(op)
+        lhs, rhs = lhs.strip(), rhs.strip()
+        if not lhs or not rhs:
+            raise TextSyntaxError(lineno, line, f"'{op}' needs both a left and right side")
+        return op, lhs, rhs
     raise TextSyntaxError(
         lineno,
         line,
-        "not a directive and not an equation; expected 'key: ...', 'dst ~ ...' or 'a ~~ ...'",
+        "not a directive and not an equation; expected 'key: ...', 'dst ~ ...', 'a ~~ ...' "
+        "or 'a -- ...' (co-path)",
     )
 
 
@@ -360,6 +386,15 @@ def to_text(model: Model, include_name: bool = True) -> str:
         lines.append("")
         for edge in model.bidirected_edges:
             lines.append(f"{edge.a} ~~ " + _term_text(edge.value, edge.b))
+
+    if model.copaths:
+        lines.append("")
+        for copath in model.copaths:
+            default = f"{copath.a}--{copath.b}"
+            suffix = "" if copath.process == default else f" [{copath.process}]"
+            lines.append(
+                f"{copath.a} -- " + _term_text(copath.coefficient, copath.b) + suffix
+            )
 
     if model.assumptions:
         lines.append("")

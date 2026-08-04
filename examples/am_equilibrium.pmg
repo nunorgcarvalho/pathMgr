@@ -1,9 +1,16 @@
 # One assortative-mating transmission unit at equilibrium:
 # a mated pair (m, f) and their two full-sib children (o1, o2).
 #
-# This is the same model as `am_pair_with_two_children()` in tests/test_am_spec_spike.py,
-# written in the text grammar instead of with builder calls. A test asserts the two produce
-# an identical model -- that is the contract of the text front-end.
+# Assortment is a SINGLE co-path between the partners' phenotypes. That one edge replaces the
+# three hand-written induced covariances this file used to carry (g_m<->g_f, e_m<->g_f,
+# e_f<->g_m), and it also supplies the one they were missing -- Cov[e_m, e_f] -- so that
+# Cov[y_m, y_f] = rho_y * V_P, the defining property of the mating model, now actually holds.
+# See examples/am_equilibrium_handwritten.pmg for the superseded encoding and why it was wrong.
+#
+# The co-path coefficient is NOT the correlation: Cov[y_m, y_f] = mu * V_P^2, so a target
+# phenotypic correlation rho_y needs mu = rho_y / V_P. Under assortment V_P grows every
+# generation, so mu is generation-indexed -- here it is written out in terms of V_A_eq and V_E
+# rather than as a bare symbol, precisely so that dependence stays visible.
 
 units: unstandardized
 latent: g_m, e_m, g_f, e_f, g_o1, e_o1, s_o1, g_o2, e_o2, s_o2
@@ -34,10 +41,9 @@ y_o2 ~ g_o2 + e_o2
 g_o1 ~ 1/2*g_m + 1/2*g_f + s_o1
 g_o2 ~ 1/2*g_m + 1/2*g_f + s_o2
 
-# parents are exogenous at the equilibrium scale; assortment correlates their g
+# the parents are exogenous at the equilibrium scale
 g_m ~~ V_A_eq*g_m
 g_f ~~ V_A_eq*g_f
-g_m ~~ (rho_g*V_A_eq)*g_f
 
 e_m  ~~ V_E*e_m
 e_f  ~~ V_E*e_f
@@ -46,10 +52,9 @@ e_o2 ~~ V_E*e_o2
 s_o1 ~~ V_K*s_o1
 s_o2 ~~ V_K*s_o2
 
-# each parent's environment is correlated with the OTHER parent's genes -- the term that
-# makes lineal relatives differ from collateral ones under assortative mating
-e_m ~~ (rho_g*V_E)*g_f
-e_f ~~ (rho_g*V_E)*g_m
+# assortative mating: one co-path, mu = rho_y / V_P. Every induced covariance among the
+# partners' causes -- g with g, e with g, e with e -- follows from this and is NOT written out.
+y_m -- (rho_y/(V_A_eq + V_E))*y_f
 
 # the coupled equilibrium fixed point -- to be solved, never traced
 assume: rho_g = rho_y*h2_eq
