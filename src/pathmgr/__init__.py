@@ -1,0 +1,37 @@
+"""pathMgr -- symbolic path analysis.
+
+Three jobs: **specify** a model of dependencies between variables (directed paths and
+bidirected covariances, with symbolic coefficients); **compute** the covariance or
+correlation between any two of them -- latent and intermediate ones included -- symbolically;
+and **draw** the corresponding path diagram (TikZ for LaTeX, plus a raster export).
+
+pathMgr does *not* fit models to data. No estimation, no optimization, no fit statistics.
+It is a symbolic derivation and visualization tool.
+
+The generic path-analysis core lives in :mod:`pathmgr.core` and knows nothing about
+genetics; the genetics (pedigrees, assortative mating) lives in :mod:`pathmgr.genetics`
+on top of it.
+"""
+
+from .core import (
+    BidirectedEdge,
+    DirectedEdge,
+    Model,
+    ModelIssue,
+    SymbolRegistry,
+    Units,
+    Variable,
+)
+
+__version__ = "0.0.1"
+
+__all__ = [
+    "BidirectedEdge",
+    "DirectedEdge",
+    "Model",
+    "ModelIssue",
+    "SymbolRegistry",
+    "Units",
+    "Variable",
+    "__version__",
+]
