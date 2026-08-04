@@ -9,15 +9,20 @@
 """
 
 from .model import BidirectedEdge, DirectedEdge, Model, ModelIssue, Variable
+from .ram import CovarianceReport, CyclicModelError, RAMEngine, SingularModelError
 from .symbols import SymbolRegistry
 from .text import TextSyntaxError, from_text, to_text
 from .units import Units
 
 __all__ = [
     "BidirectedEdge",
+    "CovarianceReport",
+    "CyclicModelError",
     "DirectedEdge",
     "Model",
     "ModelIssue",
+    "RAMEngine",
+    "SingularModelError",
     "SymbolRegistry",
     "TextSyntaxError",
     "Units",

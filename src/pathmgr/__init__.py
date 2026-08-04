@@ -15,9 +15,13 @@ on top of it.
 
 from .core import (
     BidirectedEdge,
+    CovarianceReport,
+    CyclicModelError,
     DirectedEdge,
     Model,
     ModelIssue,
+    RAMEngine,
+    SingularModelError,
     SymbolRegistry,
     TextSyntaxError,
     Units,
@@ -30,9 +34,13 @@ __version__ = "0.0.1"
 
 __all__ = [
     "BidirectedEdge",
+    "CovarianceReport",
+    "CyclicModelError",
     "DirectedEdge",
     "Model",
     "ModelIssue",
+    "RAMEngine",
+    "SingularModelError",
     "SymbolRegistry",
     "TextSyntaxError",
     "Units",

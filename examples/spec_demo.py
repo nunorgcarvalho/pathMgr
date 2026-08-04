@@ -215,6 +215,54 @@ def _same(a: pm.Model, b: pm.Model) -> bool:
     return key(a) == key(b)
 
 
+def engine_tour() -> None:
+    """The RAM engine: covariances between any two variables, latents included."""
+    print("=" * 78)
+    print("RAM ENGINE")
+    print()
+
+    m = relative_covariance_section1()
+    e = pm.RAMEngine(m)
+    print(f"  {len(m.names)} nodes, {len(m.observed)} observed; used inverse: {e.used_inverse}")
+    print()
+    print("  Section 1 of relative_covariance.tex, derived rather than recorded:")
+    for x, y in [("y_i", "y_j"), ("g_i", "g_j"), ("g_i", "y_i"), ("e_i", "e_j"), ("g_i", "e_j")]:
+        kind = "/".join("latent" if m.var(v).latent else "observed" for v in (x, y))
+        print(f"    Cov[{x:>3}, {y:>3}] = {str(e.cov(x, y)):<16} ({kind})")
+    print(f"    Var[y_i]         = {e.var('y_i')}")
+    print(f"    Corr[y_i, y_j]   = {e.corr('y_i', 'y_j')}")
+    print()
+    print("  the boxed Level-2 result E[y_i y_j | pi_ij] = V_A * pi_ij:",
+          sp.simplify(e.cov("y_i", "y_j") - m.sym("V_A") * m.sym("pi_ij")) == 0)
+    print("  and Cov[y_i,y_j] == Cov[g_i,g_j] (eq:reduce):",
+          sp.simplify(e.cov("y_i", "y_j") - e.cov("g_i", "g_j")) == 0)
+    print()
+
+    print("  a feedback loop -- infinitely many Wright chains, summed in closed form:")
+    cyc = pm.Model("feedback")
+    cyc.add_vars("x", "y", "z")
+    cyc.add_path("x", "y", "a")
+    cyc.add_path("y", "z", "b")
+    cyc.add_path("z", "y", "d")
+    for v in ("x", "y", "z"):
+        cyc.add_variance(v, f"S_{v}")
+    ec = pm.RAMEngine(cyc)
+    print(f"    recursive: {cyc.is_recursive}; used inverse: {ec.used_inverse}")
+    print(f"    Cov[x, y] = {sp.factor(ec.cov('x', 'y'))}")
+    print()
+
+    print("  the disturbance-covariance trap that validate() now catches:")
+    trap = pm.Model("trap")
+    trap.add_vars("x", "y", "z")
+    trap.add_path("x", "y", "a")
+    trap.add_variance("x", "V_x")
+    trap.add_variance("z", "V_z")
+    trap.add_cov("y", "z", "c")  # y is endogenous with no disturbance variance
+    for issue in trap.validate():
+        print(f"    {str(issue)[:100]}...")
+    print()
+
+
 if __name__ == "__main__":
     for model in (
         bivariate_regression(),
@@ -223,3 +271,4 @@ if __name__ == "__main__":
     ):
         show(model)
     text_front_end_tour()
+    engine_tour()

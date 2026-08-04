@@ -133,6 +133,39 @@ In `(V_A*pi_ij)*g_j` the trailing identifier is the variable and everything befo
 covaries with? Write `g_i ~~ V_A*g_i`. As a backstop, a name used both as a variable and as
 a coefficient symbol is rejected outright.
 
+## The RAM engine
+
+```python
+eng = pm.RAMEngine(model)
+eng.sigma()                       # FULL Sigma over all nodes — the primary object
+eng.sigma_observed()              # (F Sigma F^T, observed names) — a view, not primary
+eng.cov("g_i", "g_j")             # any pair: latent-latent, latent-observed, observed-observed
+eng.var("y_i"); eng.corr("y_i", "y_j")
+eng.explain("y_i", "y_j")         # covariance + both variances + UNITS
+eng.check_standardization()        # variables whose implied variance isn't 1
+```
+
+- **The full matrix is primary.** The whole point of pathMgr is covariances between *any* two
+  variables, so `F` is applied only when asked. Never bake the observed filter into the core.
+- **Recursive models never form `(I - A)^-1`.** Two topological sweeps build `T = S (I-A)^-T`
+  and then `Sigma = (I-A)^-1 T` entry by entry, exploiting Σ's symmetry to halve the work.
+  Cyclic models fall back to the explicit inverse — a genuine capability the chain tracer in
+  [tracing.py](src/pathmgr/core/tracing.py) cannot match, since a feedback loop has
+  infinitely many Wright chains but a closed-form geometric sum. A structurally singular
+  `(I - A)` raises `SingularModelError`.
+- **`Sigma` is cached against `model.revision`** and rebuilt on any structural change. Build
+  the whole pedigree first, *then* query — mutating mid-query pays the build again.
+- **Simplification is explicit, never reflexive.** The only automatic step is `expand` per
+  entry as it is built (cheap, and what makes terms cancel). `cov` defaults to
+  `form="expanded"` — canonical, and the form to compare term-by-term against the tracer.
+  `corr` defaults to `"simplified"` because an unsimplified ratio is unreadable. `"raw"` and
+  `"factored"` are also available.
+- **Side relations are opt-in.** `apply_assumptions=True` substitutes only unambiguous
+  `Symbol = expr` relations. A relation like `V_A + V_E = 1` could be solved either way, so it
+  is skipped unless you name the symbol to eliminate: `apply_assumptions=["V_E"]`.
+- See [docs/profile_ram.md](docs/profile_ram.md) for measured timings and the budget for
+  unrolling generations. Regenerate with `python scripts/profile_ram.py N`.
+
 ## Gotchas that shaped the design
 
 **Symbol names collide with sympy builtins, silently.** The notation of statistical
@@ -162,6 +195,22 @@ never from "unroll a lot". A tracer must fail loudly rather than truncate.
 **Symbolic blowup.** sympy expressions grow fast with pedigree depth. Simplify deliberately
 at defined points; do not assume `simplify()` is cheap. For a recursive (acyclic) model,
 prefer forward substitution in topological order over a general symbolic matrix inverse.
+Also: sympy will not always reduce what looks obvious — `sqrt((V_A + V_E)**2)` survives
+`simplify()` even with both symbols declared positive. Compare squared, or `factor` inside the
+root.
+
+**Bidirected edges on endogenous variables are a trap.** A bidirected edge is a covariance
+between *disturbances*. For two exogenous variables that coincides with their covariance,
+which is why the distinction is easy to miss. For an endogenous variable it does not, and if
+that variable has no disturbance variance of its own its disturbance is identically zero and
+cannot covary with anything — so asserting that it does yields a `Sigma` that is **not
+positive semi-definite**, with an implied correlation above 1 and no other complaint.
+`Model.validate()` reports this as an error, and the warning case (endogenous but with a
+disturbance variance) too. This bit while writing the RAM profile: encoding assortative mating
+as `g_mother <-> g_father` is right for a founding couple and wrong the moment a mate is
+someone's child. The fix is to make assortment a **directed path from the partner's
+phenotype** — see the last section of [docs/profile_ram.md](docs/profile_ram.md), which
+matters for [pedigree.py](src/pathmgr/genetics/pedigree.py).
 
 ## Correctness properties
 

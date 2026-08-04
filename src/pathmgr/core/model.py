@@ -225,12 +225,41 @@ class Model:
     def assumptions(self) -> tuple[sp.Eq, ...]:
         return tuple(self._assumptions)
 
-    def substitutions(self) -> dict[sp.Symbol, sp.Expr]:
-        """Those assumptions of the form ``Symbol = expr``, as a substitution dict."""
+    def substitutions(self, solve_for: tuple[str, ...] | list[str] = ()) -> dict[sp.Symbol, sp.Expr]:
+        """Assumptions as a substitution dict.
+
+        By default this is only those assumptions already in ``Symbol = expr`` form, because
+        those are the unambiguous ones -- ``rho_g = rho_y * h2_eq`` says what to replace.
+        A relation like ``V_A + V_E = 1`` does not: it could be solved for either symbol, and
+        picking one silently would be guessing. Name the symbols you want eliminated in
+        ``solve_for`` to have such relations solved explicitly:
+
+        >>> m = Model().assume("V_A + V_E", 1)
+        >>> m.substitutions()                        # nothing unambiguous to do
+        {}
+        >>> m.substitutions(solve_for=["V_E"])       # doctest: +SKIP
+        {V_E: 1 - V_A}
+        """
         subs: dict[sp.Symbol, sp.Expr] = {}
         for eq in self._assumptions:
             if isinstance(eq.lhs, sp.Symbol) and eq.lhs not in eq.rhs.free_symbols:
                 subs[eq.lhs] = eq.rhs
+        for name in solve_for:
+            symbol = self.sym(name)
+            if symbol in subs:
+                continue
+            for eq in self._assumptions:
+                if symbol not in eq.free_symbols:
+                    continue
+                solutions = sp.solve(eq, symbol)
+                if len(solutions) == 1:
+                    subs[symbol] = solutions[0]
+                    break
+            else:
+                raise ValueError(
+                    f"no assumption determines {name!r} uniquely; "
+                    f"assumptions are: {[str(e) for e in self._assumptions]}"
+                )
         return subs
 
     # -- views ------------------------------------------------------------------------
@@ -360,12 +389,67 @@ class Model:
             issues.append(
                 ModelIssue("warning", "directed cycle: " + " -> ".join(cyc))
             )
+        issues.extend(self._check_disturbance_covariances())
         if self.units.is_standardized:
             for n in self.exogenous:
                 v = self.cov_value(n, n)
                 if v is not None and v == 0:
                     issues.append(
                         ModelIssue("error", f"{n!r} has zero variance in a standardized model")
+                    )
+        return issues
+
+    def _check_disturbance_covariances(self) -> list[ModelIssue]:
+        """Flag off-diagonal bidirected edges that touch an endogenous variable.
+
+        A bidirected edge is a covariance between *disturbances*, not between variables. On
+        two exogenous variables those coincide, which is why the distinction is easy to miss.
+        On an endogenous variable they do not, and there are two failure modes:
+
+        - If the endogenous variable has **no** disturbance variance of its own, it is a
+          deterministic function of its parents, so its disturbance is identically zero and
+          cannot covary with anything. Stating that it does yields a Sigma that is not
+          positive semi-definite -- an implied correlation above 1 -- with no other complaint.
+          That is an **error**.
+        - Otherwise the edge is meaningful but means the covariance of the *residual*, not
+          the total covariance the notation suggests. That is a **warning**.
+
+        The trap that motivated this: in an assortative-mating pedigree, mates' genetic values
+        are correlated, but a child's genetic value is endogenous (it has parents). Writing
+        that correlation as a plain bidirected edge silently produces an invalid Sigma. The
+        assortment has to enter as a directed effect of the phenotype instead.
+        """
+        issues: list[ModelIssue] = []
+        endogenous = set(self.endogenous)
+        for edge in self._bidirected.values():
+            if edge.is_variance or edge.value == 0:
+                continue
+            for name, other in ((edge.a, edge.b), (edge.b, edge.a)):
+                if name not in endogenous:
+                    continue
+                own = self.cov_value(name, name)
+                if own is None or own == 0:
+                    issues.append(
+                        ModelIssue(
+                            "error",
+                            f"{name!r} is endogenous with no disturbance variance, so its "
+                            f"disturbance is identically zero and cannot covary with "
+                            f"{other!r} -- yet '{edge.a} <-> {edge.b}' says it does. The "
+                            f"implied covariance matrix is not positive semi-definite. "
+                            f"Bidirected edges are DISTURBANCE covariances: to correlate a "
+                            f"variable that has parents, add the association as a directed "
+                            f"path, or give {name!r} a disturbance variance.",
+                        )
+                    )
+                else:
+                    issues.append(
+                        ModelIssue(
+                            "warning",
+                            f"'{edge.a} <-> {edge.b}' involves the endogenous variable "
+                            f"{name!r}, so it is the covariance of {name!r}'s DISTURBANCE "
+                            f"with {other!r} -- not their total covariance, which the model "
+                            f"implies and which will be larger.",
+                        )
                     )
         return issues
 
