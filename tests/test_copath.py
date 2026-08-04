@@ -513,3 +513,151 @@ def test_validate_flags_an_inert_copath():
         "this one contributes" in s for s in messages
     )
     assert pm.RAMEngine(m).cov("a", "b") == 0
+
+
+# ======================================================================================
+# the coordinator's validation pedigree, and where a sequential rank-one update breaks
+# ======================================================================================
+def test_half_sibling_pedigree_matches_every_hand_derived_value():
+    """The validation set from task-20260804-173343, on both engines.
+
+    Two mating processes sharing an individual A. Note two results random mating cannot produce
+    at all: the in-laws B and B2 covary at rho_g^2 V_P with no common ancestor, and the half-sib
+    value exceeds the collateral formula V_A(1+rho_g)^2/4 by rho_g^2 V_E/4 -- which is why
+    half-sibs do not follow ((1+rho_g)/2)^d.
+    """
+    from battery import half_sibling_pedigree
+
+    m = half_sibling_pedigree()
+    V_A, V_E, V_K, rho_y = (m.sym(s) for s in ("V_A", "V_E", "V_K", "rho_y"))
+    V_P = V_A + V_E
+    rho_g = rho_y * V_A / V_P
+    expected = {
+        ("y_A", "y_B"): rho_y * V_P,
+        ("g_A", "g_B"): rho_g * V_A,
+        ("e_A", "e_B"): rho_y * V_E**2 / V_P,
+        ("e_A", "g_B"): rho_g * V_E,
+        ("y_A", "y_A"): V_P,                                             # variance unchanged
+        ("g_A", "g_A"): V_A,                                             # variance unchanged
+        ("g_A", "g_E1"): V_A * (1 + rho_g) / 2,
+        ("y_A", "y_E1"): V_A * (1 + rho_y) / 2,
+        ("g_E1", "g_E2"): V_A * (1 + rho_g) / 2,
+        ("g_B", "g_B2"): rho_g**2 * V_P,                                 # in-laws
+        ("g_E1", "g_H"): (V_A * (1 + 2 * rho_g) + rho_g**2 * V_P) / 4,    # half-sibs
+    }
+    for engine in (pm.RAMEngine(m), pm.WrightTracer(m)):
+        for (x, y), want in expected.items():
+            assert sp.simplify(engine.cov(x, y) - want) == 0, f"Cov[{x}, {y}]"
+
+    # Var[g_E1] = V_A(1+rho_g)/2 + V_K = V_A + rho_g V_A / 2 with V_K = V_A/2.
+    # The task's expected value was written as V_A + rho_y V_A^2 / 2, which is this ONLY when
+    # V_P = 1 -- exactly the generation-indexing trap the task itself warns about, hidden by the
+    # numeric oracle's choice of V_A = 0.4, V_E = 0.6. Assert the general form.
+    got = pm.RAMEngine(m).var("g_E1").subs({V_K: V_A / 2})
+    assert sp.simplify(got - (V_A + rho_g * V_A / 2)) == 0
+    assert sp.simplify(got - (V_A + rho_y * V_A**2 / (2 * V_P))) == 0
+    assert sp.simplify((got - (V_A + rho_y * V_A**2 / 2)).subs({V_E: 1 - V_A})) == 0
+
+    excess = sp.simplify(expected[("g_E1", "g_H")] - V_A * (1 + rho_g) ** 2 / 4)
+    assert sp.simplify(excess - rho_g**2 * V_E / 4) == 0
+
+
+def test_rho_y_zero_collapses_to_random_mating():
+    from battery import half_sibling_pedigree
+
+    m = half_sibling_pedigree()
+    V_A, V_K, rho_y = (m.sym(s) for s in ("V_A", "V_K", "rho_y"))
+    e = pm.RAMEngine(m)
+    zero = {rho_y: 0, V_K: V_A / 2}
+    assert sp.simplify(e.var("g_E1").subs(zero) - V_A) == 0
+    assert sp.simplify(e.cov("g_A", "g_E1").subs(zero) - V_A / 2) == 0
+    assert sp.simplify(e.cov("g_E1", "g_E2").subs(zero) - V_A / 2) == 0
+    assert sp.simplify(e.cov("g_E1", "g_H").subs(zero) - V_A / 4) == 0
+    assert sp.simplify(e.cov("g_A", "g_B").subs(zero)) == 0
+    assert sp.simplify(e.cov("g_B", "g_B2").subs(zero)) == 0
+
+
+def _sequential_rank_one_sigma(model, copaths):
+    """Sigma by one symmetric rank-one update per co-path against the RUNNING Sigma.
+
+    The construction proposed in task-20260804-173343 §3, reproduced only so the test below can
+    show where it departs from the tracer. This is NOT what the engine does.
+    """
+    bare = model.copy()
+    for c in list(bare.copaths):
+        bare.remove_copath(c.a, c.b, c.process)
+    sigma = pm.RAMEngine(bare).sigma()
+    index = {n: i for i, n in enumerate(bare.names)}
+    for c in copaths:
+        v1 = sigma[:, index[c.a]]
+        v2 = sigma[:, index[c.b]]
+        sigma = sp.expand(sigma + c.coefficient * (v1 * v2.T + v2 * v1.T))
+    return sigma, index
+
+
+def test_sequential_rank_one_updates_agree_where_partners_are_unrelated():
+    """On the half-sibling pedigree the two constructions coincide -- hence it validated."""
+    from battery import half_sibling_pedigree
+
+    m = half_sibling_pedigree()
+    engine = pm.RAMEngine(m)
+    sigma, index = _sequential_rank_one_sigma(m, list(m.copaths))
+    for x in ("g_E1", "g_H", "g_B", "g_B2", "y_A"):
+        for y in ("g_E1", "g_H", "g_B", "g_B2", "y_A"):
+            assert sp.simplify(sigma[index[x], index[y]] - engine.cov(x, y)) == 0
+
+
+def test_sequential_rank_one_updates_reuse_a_copath():
+    """...but they break once the COUPLE-relatedness graph has a cycle.
+
+    `A x B` mated; `A` also has child `C`, `B` also has child `D`; then `C x D` mate, so couple 2
+    has one member related to each member of couple 1. Updating against the running Sigma lets
+    couple 1's co-path be crossed on *both* legs of couple 2's update -- one mating process used
+    twice in a chain, which Sunde's rule forbids. The symptom is that the answer depends on the
+    order the updates are applied, so it cannot be right in both orders.
+
+    pathMgr enumerates sequences of *distinct* mating processes instead, which is order-free by
+    construction and agrees with the tracer here.
+    """
+    from battery import couple_relatedness_cycle
+
+    m = couple_relatedness_cycle()
+    engine, tracer = pm.RAMEngine(m), pm.WrightTracer(m)
+    copaths = list(m.copaths)
+    forward, index = _sequential_rank_one_sigma(m, copaths)
+    backward, _ = _sequential_rank_one_sigma(m, list(reversed(copaths)))
+    entry = (index["g_C"], index["g_D"])
+
+    assert sp.simplify(tracer.cov("g_C", "g_D") - engine.cov("g_C", "g_D")) == 0
+    assert sp.simplify(forward[entry] - engine.cov("g_C", "g_D")) != 0
+    assert sp.simplify(forward[entry] - backward[entry]) != 0
+
+    numbers = {
+        m.sym("V_A"): sp.Rational(40, 100),
+        m.sym("V_E"): sp.Rational(60, 100),
+        m.sym("rho_y"): sp.Rational(30, 100),
+        m.sym("V_K"): sp.Rational(20, 100),
+    }
+    exact = float(sp.N(engine.cov("g_C", "g_D").subs(numbers)))
+    assert abs(exact - 0.06) < 1e-12
+    assert float(sp.N(forward[entry].subs(numbers))) > exact
+    assert float(sp.N(backward[entry].subs(numbers))) > exact
+
+
+def test_pathmgr_copath_result_is_order_free():
+    """Nothing in the engine depends on the order co-paths were added."""
+    from battery import couple_relatedness_cycle
+
+    m = couple_relatedness_cycle()
+    shuffled = m.copy()  # copies the symbol registry, so assumptions match
+    original = list(m.copaths)
+    for c in original:
+        shuffled.remove_copath(c.a, c.b, c.process)
+    for c in reversed(original):  # re-added in the opposite order
+        shuffled.add_copath(c.a, c.b, c.coefficient, process=c.process)
+    assert [c.process for c in shuffled.copaths] == [c.process for c in reversed(original)]
+
+    a, b = pm.RAMEngine(m), pm.RAMEngine(shuffled)
+    for x in ("g_C", "g_D", "y_C", "y_D", "g_A", "g_B"):
+        for y in ("g_C", "g_D", "y_C", "y_D", "g_A", "g_B"):
+            assert sp.simplify(a.cov(x, y) - b.cov(x, y)) == 0

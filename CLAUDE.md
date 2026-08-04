@@ -247,6 +247,15 @@ process**. Co-paths from *different* processes may combine, and must — that is
 `((1+rho_g)/2)^d` across generations. Implementing "one co-path per chain" would silently
 truncate every multi-generation result to first order in `rho_g`.
 
+**Do not replace the enumeration with sequential rank-one updates against a running `Sigma`.**
+That construction (`Sigma += mu*(outer(Sigma e_a, Sigma e_b) + transpose)`, once per co-path)
+looks equivalent and agrees wherever each couple pairs with an unrelated partner — including on
+the half-sibling pedigree. It breaks once the **couple-relatedness graph has a cycle**: using the
+running `Sigma` on *both* legs lets one mating process be crossed twice in a chain. The symptom
+is order dependence, so it cannot be right in both orders.
+`test_sequential_rank_one_updates_reuse_a_copath` pins this on `A x B` mated, `A` and `B` each
+having a child by someone else, and those two children mating.
+
 **The RAM form.** Bundling each leg into a `Sigma_0` entry, a co-path sequence contributes a
 scalar times an **outer product** of one `Sigma_0` column and one `Sigma_0` row — which is
 exactly why it reaches the causes, where a bidirected edge contributes `B` columns instead. The

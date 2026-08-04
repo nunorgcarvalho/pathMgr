@@ -244,6 +244,74 @@ def copath_chain_of_three() -> pm.Model:
     return m
 
 
+def couple_relatedness_cycle() -> pm.Model:
+    """A x B mated; A also has child C, B also has child D; then C x D mate.
+
+    Couple 2 has one member related to each member of couple 1, so the *couple-relatedness*
+    graph has a cycle. This is the pedigree that separates a correct co-path implementation
+    from a sequential rank-one update against the running Sigma: that construction lets a
+    chain cross couple 1's co-path on BOTH legs of couple 2's update, which Sunde's
+    one-co-path-per-mating-process rule forbids. It shows up as order dependence.
+    See tests/test_copath.py::test_sequential_rank_one_updates_reuse_a_copath.
+    """
+    m = pm.Model("couple-relatedness cycle", units=pm.Units.unstandardized())
+    for v in ("V_A", "V_E", "V_K"):
+        m.declare(v, positive=True)
+    V_A, V_E, V_K, rho_y = (m.sym(s) for s in ("V_A", "V_E", "V_K", "rho_y"))
+    founders = ("A", "B", "P1", "P2")
+    for who in founders + ("C", "D"):
+        m.add_var(f"g_{who}", latent=True)
+        m.add_var(f"e_{who}", latent=True)
+        m.add_var(f"y_{who}")
+        m.add_path(f"g_{who}", f"y_{who}", 1)
+        m.add_path(f"e_{who}", f"y_{who}", 1)
+        m.add_variance(f"e_{who}", V_E)
+    for who in founders:
+        m.add_variance(f"g_{who}", V_A)
+    for child, first, second in [("C", "A", "P1"), ("D", "B", "P2")]:
+        m.add_var(f"s_{child}", latent=True)
+        m.add_variance(f"s_{child}", V_K)
+        m.add_path(f"g_{first}", f"g_{child}", sp.Rational(1, 2))
+        m.add_path(f"g_{second}", f"g_{child}", sp.Rational(1, 2))
+        m.add_path(f"s_{child}", f"g_{child}", 1)
+    mu = rho_y / (V_A + V_E)
+    m.add_copath("y_A", "y_B", mu, process="c1")
+    m.add_copath("y_C", "y_D", mu, process="c2")
+    return m
+
+
+def half_sibling_pedigree() -> pm.Model:
+    """A x B -> full sibs E1, E2;  A x B2 -> H.  So E1 and H are half-sibs through A.
+
+    The coordinator's validation pedigree for task-20260804-173343: two mating processes
+    sharing an individual. Carries the in-law covariance rho_g^2 V_P between B and B2, who have
+    no common ancestor at all, and the half-sib value that does NOT follow ((1+rho_g)/2)^d.
+    """
+    m = pm.Model("half-sibling pedigree", units=pm.Units.unstandardized())
+    for v in ("V_A", "V_E", "V_K"):
+        m.declare(v, positive=True)
+    V_A, V_E, V_K, rho_y = (m.sym(s) for s in ("V_A", "V_E", "V_K", "rho_y"))
+    for who in ("A", "B", "B2", "E1", "E2", "H"):
+        m.add_var(f"g_{who}", latent=True)
+        m.add_var(f"e_{who}", latent=True)
+        m.add_var(f"y_{who}")
+        m.add_path(f"g_{who}", f"y_{who}", 1)
+        m.add_path(f"e_{who}", f"y_{who}", 1)
+        m.add_variance(f"e_{who}", V_E)
+    for who in ("A", "B", "B2"):
+        m.add_variance(f"g_{who}", V_A)
+    for child, other in [("E1", "B"), ("E2", "B"), ("H", "B2")]:
+        m.add_var(f"s_{child}", latent=True)
+        m.add_variance(f"s_{child}", V_K)
+        m.add_path("g_A", f"g_{child}", sp.Rational(1, 2))
+        m.add_path(f"g_{other}", f"g_{child}", sp.Rational(1, 2))
+        m.add_path(f"s_{child}", f"g_{child}", 1)
+    mu = rho_y / (V_A + V_E)
+    m.add_copath("y_A", "y_B", mu, process="couple_AB")
+    m.add_copath("y_A", "y_B2", mu, process="couple_AB2")
+    return m
+
+
 def all_models() -> dict[str, pm.Model]:
     """Every battery model, keyed by a readable name (used as the pytest test id)."""
     models: dict[str, pm.Model] = {
@@ -256,6 +324,8 @@ def all_models() -> dict[str, pm.Model]:
         "diamond": diamond(),
         "standardized regression": standardized_regression(),
         "co-path chain of three": copath_chain_of_three(),
+        "half-sibling pedigree": half_sibling_pedigree(),
+        "couple-relatedness cycle": couple_relatedness_cycle(),
     }
     models.update(_imported_models())
     for seed in range(4):
