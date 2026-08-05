@@ -165,5 +165,15 @@ def main(out: Path) -> None:
 
 
 if __name__ == "__main__":
-    target = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "docs" / "figures"
-    main(target)
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "output_dir",
+        nargs="?",
+        default=str(ROOT / "docs" / "figures"),
+        help="directory to write the figures into",
+    )
+    # argparse rejects an unknown flag outright, so a mistyped `--outdir DIR` errors instead of
+    # silently creating a directory literally named "--outdir".
+    main(Path(parser.parse_args().output_dir))

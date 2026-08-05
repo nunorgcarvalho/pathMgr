@@ -76,10 +76,12 @@ class DiagramStyle:
     font_size: str = "small"
 
     # -- arrow tips --------------------------------------------------------------------
-    # TikZ's built-in tips, so the output needs no `arrows.meta` (absent from TinyTeX).
-    # Set these to e.g. "-{Latex[length=1.8mm]}" if the host document loads arrows.meta.
-    arrow_tip_directed: str = "->"
-    arrow_tip_bidirected: str = "<->"
+    # `arrows.meta` Stealth tips by default: TikZ's built-in `->` draws a hairline tip that is
+    # hard to see once a diagram is more than a few nodes wide. popstatgenwriteups' config.sty
+    # loads arrows.meta, and `to_standalone` adds it automatically when these tips need it.
+    # Use `DiagramStyle.portable()` for a snippet going into a document that may not load it.
+    arrow_tip_directed: str = "-{Stealth[length=2mm]}"
+    arrow_tip_bidirected: str = "{Stealth[length=2mm]}-{Stealth[length=2mm]}"
     #: raster-only: arrowhead size in points. Must stay legible on a large figure, so it is
     #: deliberately larger than matplotlib's default of 10.
     arrow_head_size: float = 20.0
@@ -118,6 +120,23 @@ class DiagramStyle:
         if text.startswith("$") and text.endswith("$") and len(text) > 1:
             return text[1:-1]
         return text
+
+    @classmethod
+    def portable(cls, **kwargs) -> "DiagramStyle":
+        """A style using only TikZ's built-in arrow tips, needing no ``arrows.meta``.
+
+        Slightly less legible, but a snippet emitted with it pastes into any document that loads
+        plain ``tikz``.
+        """
+        return cls(arrow_tip_directed="->", arrow_tip_bidirected="<->", **kwargs)
+
+    @property
+    def needs_arrows_meta(self) -> bool:
+        """True if the arrow tips require the ``arrows.meta`` library."""
+        return any(
+            tip not in ("->", "<->", "-", "<-")
+            for tip in (self.arrow_tip_directed, self.arrow_tip_bidirected)
+        )
 
     def legend_entries(self) -> tuple[tuple[str, str], ...]:
         """``(edge kind, one-line meaning)`` pairs, for a figure that spells the rules out."""

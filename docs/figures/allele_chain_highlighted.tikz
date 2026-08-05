@@ -4,8 +4,8 @@
   every node/.style={font=\small},
   pmObserved/.style={draw=black, fill=white, rectangle, minimum width=0.85cm, minimum height=0.6cm, inner sep=1pt},
   pmLatent/.style={draw=black, fill=white, ellipse, minimum width=0.85cm, minimum height=0.6cm, inner sep=1pt},
-  pmDirected/.style={->, line width=0.7pt},
-  pmBidirected/.style={<->, line width=0.7pt},
+  pmDirected/.style={-{Stealth[length=2mm]}, line width=0.7pt},
+  pmBidirected/.style={{Stealth[length=2mm]}-{Stealth[length=2mm]}, line width=0.7pt},
   pmCopath/.style={line width=1.6pt},
   pmLabel/.style={midway, fill=white, inner sep=1pt},
 ]

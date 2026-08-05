@@ -11,12 +11,17 @@ Conventions (see :mod:`pathmgr.render.style` for why the co-path is over-differe
     bidirected a <-> b   curved, two arrowheads; a self-edge is a variance loop
     co-path   a -- b     straight, NO arrowheads, thicker, distinct colour
 
-Required packages: ``tikz`` (with the ``shapes.geometric`` library, for the latent ellipse) and
-``xcolor``. Deliberately nothing else -- the arrowheads are TikZ's built-in ``->``/``<->`` tips
-rather than ``arrows.meta``, because that library is absent from a plain TinyTeX install, and
-``standalone.cls`` is too. So the default document class for :func:`to_standalone` is ``article``
-with ``geometry``, which is present everywhere; pass ``document_class="standalone"`` if you have
-it. The emitted picture declares its own styles and depends on nothing else in the host document.
+Required packages: ``tikz`` with ``shapes.geometric`` (for the latent ellipse) and ``arrows.meta``
+(for the default Stealth arrow tips), plus ``xcolor``. ``popstatgenwriteups``' ``config.sty`` loads
+all of these. For a snippet going into a document that may not load ``arrows.meta``, use
+:meth:`pathmgr.render.DiagramStyle.portable`, which falls back to TikZ's built-in ``->``/``<->``
+tips; :func:`to_standalone` emits only the libraries the chosen style actually needs.
+
+``standalone.cls`` is genuinely absent from a plain TinyTeX install and cannot be added without a
+TeX Live infrastructure update, so :func:`to_standalone` defaults to ``article`` with the page
+sized to the drawing. Pass ``document_class="standalone"`` if you have that class.
+
+The emitted picture declares its own styles and depends on nothing else in the host document.
 
 Nothing here imports the RAM engine or the tracer: a model is renderable without computing
 anything. Highlighting takes an already-computed :class:`pathmgr.Chain`, so the dependency runs
@@ -36,16 +41,27 @@ from .layout import Layout
 from .style import DiagramStyle
 
 __all__ = [
+    "ARROW_LIBRARY",
     "TIKZ_LIBRARIES",
     "TikzCompileError",
+    "required_libraries",
     "highlight_sets",
     "to_standalone",
     "to_tikz",
     "write_pdf",
 ]
 
-#: libraries the emitted picture needs -- kept to the one that is genuinely required
+#: libraries always needed: the latent ellipse
 TIKZ_LIBRARIES = ("shapes.geometric",)
+#: additionally needed by the default Stealth arrow tips
+ARROW_LIBRARY = "arrows.meta"
+
+
+def required_libraries(style: DiagramStyle) -> tuple[str, ...]:
+    """The TikZ libraries a picture drawn with ``style`` needs."""
+    if style.needs_arrows_meta:
+        return TIKZ_LIBRARIES + (ARROW_LIBRARY,)
+    return TIKZ_LIBRARIES
 
 
 class TikzCompileError(RuntimeError):
@@ -279,8 +295,9 @@ def to_standalone(
     Defaults to ``article`` because ``standalone.cls`` is not part of a plain TinyTeX install.
     Pass ``document_class="standalone"`` for a tightly cropped figure if you have that class.
     """
+    style = style or DiagramStyle()
     picture = to_tikz(model, layout=layout, style=style, highlight=highlight, **kwargs)
-    libraries = ",".join(TIKZ_LIBRARIES)
+    libraries = ", ".join(required_libraries(style))
     if document_class == "standalone":
         header = ["\\documentclass[border=6pt]{standalone}"]
     else:
@@ -348,7 +365,16 @@ def write_pdf(
             text=True,
         )
         produced = Path(tmp) / "diagram.pdf"
-        if result.returncode != 0 or not produced.exists():
+        # A PDF appearing is NOT proof of success: with -interaction=nonstopmode pdflatex
+        # writes one anyway after a hard error. Count the "!" diagnostics in the log instead.
+        texlog_path = Path(tmp) / "diagram.log"
+        hard_errors = 0
+        if texlog_path.exists():
+            hard_errors = sum(
+                1 for line in texlog_path.read_text(errors="replace").splitlines()
+                if line.startswith("!")
+            )
+        if result.returncode != 0 or not produced.exists() or hard_errors:
             log = (result.stdout or "") + (result.stderr or "")
             texlog = Path(tmp) / "diagram.log"
             if texlog.exists():
@@ -361,7 +387,9 @@ def write_pdf(
                 if line.startswith("!"):
                     interesting.extend(lines_[i : i + 6])
             detail = "\n".join(interesting[:40]) or "\n".join(lines_[-25:])
-            raise TikzCompileError(f"{engine} failed:\n{detail}")
+            raise TikzCompileError(
+                f"{engine} reported {hard_errors} hard error(s):\n{detail}"
+            )
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(produced.read_bytes())
     return path

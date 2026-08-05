@@ -89,6 +89,8 @@ def test_the_three_edge_types_are_visually_distinct():
     # arrowheads: one, two, none
     assert f"pmDirected/.style={{{style.arrow_tip_directed}" in tex
     assert f"pmBidirected/.style={{{style.arrow_tip_bidirected}" in tex
+    assert style.arrow_tip_directed.count("Stealth") == 1  # one head
+    assert style.arrow_tip_bidirected.count("Stealth") == 2  # two heads
     copath_style = [line for line in tex.splitlines() if "pmCopath/.style" in line][0]
     assert "->" not in copath_style and "<-" not in copath_style, copath_style
 
@@ -298,17 +300,41 @@ def test_standalone_is_a_complete_document():
     source = to_standalone(three_edge_model())
     assert "\\documentclass" in source
     assert "\\usepackage{tikz}" in source
-    assert "\\usetikzlibrary{shapes.geometric}" in source
+    assert "\\usetikzlibrary{shapes.geometric" in source
     assert "\\begin{document}" in source and "\\end{document}" in source
     assert "\\begin{tikzpicture}" in source
 
 
-def test_standalone_does_not_require_arrows_meta_or_standalone_class():
-    """Both are absent from a plain TinyTeX install, so the default output must avoid them."""
+def test_standalone_never_uses_the_standalone_class_by_default():
+    """standalone.cls is genuinely absent here and cannot be installed, so it is not the default.
+
+    Note that `arrows.meta` IS available (it ships as `pgflibraryarrows.meta.code.tex`, so a
+    `kpsewhich tikzlibraryarrows.meta.code.tex` probe reports a false negative) and the default
+    style uses it -- see the library tests below.
+    """
     source = to_standalone(three_edge_model())
-    assert "arrows.meta" not in source
+    assert "\\documentclass{article}" in source
     assert "standalone" not in source
-    assert "Latex[" not in source
+
+
+def test_only_the_libraries_the_style_needs_are_emitted():
+    default_source = to_standalone(three_edge_model())
+    assert "shapes.geometric" in default_source
+    assert "arrows.meta" in default_source  # the default Stealth tips need it
+
+    portable_source = to_standalone(three_edge_model(), style=DiagramStyle.portable())
+    assert "shapes.geometric" in portable_source
+    assert "arrows.meta" not in portable_source
+    assert "Stealth" not in portable_source
+
+
+def test_portable_style_uses_only_built_in_arrow_tips():
+    style = DiagramStyle.portable()
+    assert not style.needs_arrows_meta
+    assert DiagramStyle().needs_arrows_meta
+    tex = to_tikz(three_edge_model(), style=style)
+    assert "pmDirected/.style={->," in tex
+    assert "Stealth" not in tex
 
 
 def test_standalone_page_is_sized_to_the_drawing():

@@ -310,14 +310,29 @@ the causes.
 arbitrary model renders at all — its bar is "legible and correct", and it does one barycentre pass
 to cut edge crossings. Do not sink time into making it beautiful.
 
-**Dependencies, deliberately minimal.** The TikZ output needs only `tikz` + `shapes.geometric` +
-`xcolor`. It does **not** use `arrows.meta` or `standalone.cls`, both of which are absent from a
-plain TinyTeX install — arrowheads are TikZ's built-in `->`/`<->` and `to_standalone` defaults to
-`article` with the page sized to the drawing. Colours are emitted as `\definecolor` declarations,
-because a raw `#RRGGBB` in TikZ trips `Illegal parameter number` (`#` is a TeX special).
-`write_pdf` calls `pdflatex` directly, not `latexmk`, since the system perl on compute nodes is
-incomplete and breaks it. matplotlib is an optional extra (`pip install -e ".[render]"`) imported
-lazily, so `import pathmgr` never needs a drawing dependency — a test asserts that.
+**Dependencies.** The TikZ output needs `tikz` with `shapes.geometric` (latent ellipse) and
+`arrows.meta` (the default Stealth tips — TikZ's built-in `->` draws a hairline that is hard to see
+on anything wider than a few nodes), plus `xcolor`. `popstatgenwriteups`' `config.sty` loads all of
+these. `to_standalone` emits only the libraries the chosen style needs, and
+`DiagramStyle.portable()` drops back to built-in tips for a snippet going somewhere that may not
+load `arrows.meta`.
+
+`standalone.cls` **is** genuinely absent from this TinyTeX and cannot be added without a TeX Live
+infrastructure update, so `to_standalone` defaults to `article` with the page sized to the drawing.
+
+Two environment gotchas worth keeping: a raw `#RRGGBB` in TikZ trips `Illegal parameter number`
+(`#` is a TeX special), so colours are emitted as `\definecolor` declarations; and `write_pdf`
+calls `pdflatex` directly rather than `latexmk`, since the system perl on compute nodes is
+incomplete. **Verify a compile by `grep -c '^!' file.log`, not by whether a PDF appeared** —
+`-interaction=nonstopmode` writes one anyway after a hard error, and `write_pdf` checks the error
+count for exactly that reason.
+
+**Probing for a TikZ library: `kpsewhich tikzlibraryX.code.tex` gives false negatives.** Some
+libraries ship as `pgflibraryX.code.tex` instead — `arrows.meta` is one, and probing the wrong name
+made it look absent here. Check both, or just try compiling `\usetikzlibrary{X}`.
+
+matplotlib is an optional extra (`pip install -e ".[render]"`) imported lazily, so `import pathmgr`
+never needs a drawing dependency — a test asserts that.
 
 ## The correctness property — do not let this rot
 
