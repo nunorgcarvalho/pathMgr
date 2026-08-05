@@ -661,3 +661,33 @@ def test_pathmgr_copath_result_is_order_free():
     for x in ("g_C", "g_D", "y_C", "y_D", "g_A", "g_B"):
         for y in ("g_C", "g_D", "y_C", "y_D", "g_A", "g_B"):
             assert sp.simplify(a.cov(x, y) - b.cov(x, y)) == 0
+
+
+def test_a_copath_is_findable_by_its_endpoints_without_naming_the_process():
+    """Naming a process at construction must not make the edge unfindable afterwards."""
+    m = pm.Model().add_vars("a", "b")
+    m.add_copath("a", "b", "mu", process="founding couple")
+    assert m.copath_value("a", "b") == m.sym("mu")
+    assert m.copath_value("b", "a") == m.sym("mu")           # order-independent
+    assert m.copath_value("a", "b", process="founding couple") == m.sym("mu")
+    assert m.copath_value("a", "b", process="nope") is None
+    assert len(m.copaths_between("a", "b")) == 1
+    m.remove_copath("a", "b")
+    assert not m.has_copaths
+
+
+def test_an_ambiguous_copath_lookup_demands_the_process():
+    m = pm.Model().add_vars("a", "b")
+    m.add_copath("a", "b", "mu", process="first")
+    m.add_copath("a", "b", "mu2", process="second")
+    with pytest.raises(ValueError, match="Name the process"):
+        m.copath_value("a", "b")
+    assert m.copath_value("a", "b", process="second") == m.sym("mu2")
+    m.remove_copath("a", "b", process="first")
+    assert m.copath_value("a", "b") == m.sym("mu2")  # unambiguous again
+
+
+def test_removing_a_missing_copath_is_a_clear_error():
+    m = pm.Model().add_vars("a", "b")
+    with pytest.raises(KeyError, match="no co-path between"):
+        m.remove_copath("a", "b")

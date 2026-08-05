@@ -247,17 +247,52 @@ class Model:
         self._touch()
         return self
 
-    def remove_copath(self, a: str, b: str, process: str | None = None) -> "Model":
+    def copaths_between(self, a: str, b: str) -> tuple[CoPath, ...]:
+        """Every co-path joining ``a`` and ``b``, whatever mating process each belongs to."""
         first, second = (a, b) if a <= b else (b, a)
-        resolved = process if process is not None else f"{first}--{second}"
-        del self._copaths[(first, second, resolved)]
+        return tuple(
+            edge for (x, y, _), edge in self._copaths.items() if (x, y) == (first, second)
+        )
+
+    def _one_copath(self, a: str, b: str, process: str | None) -> CoPath | None:
+        """Resolve a co-path by endpoints, requiring a process only when it is ambiguous.
+
+        Looking one up by its endpoints has to work without knowing the process name, since a
+        caller who named the process at construction should not have to repeat it to find the
+        edge again -- and the default name is derived from the endpoints anyway.
+        """
+        candidates = self.copaths_between(a, b)
+        if process is not None:
+            for edge in candidates:
+                if edge.process == process:
+                    return edge
+            return None
+        if not candidates:
+            return None
+        if len(candidates) > 1:
+            raise ValueError(
+                f"{a!r} and {b!r} are joined by {len(candidates)} co-paths, from processes "
+                f"{sorted(c.process for c in candidates)}. Name the process to say which."
+            )
+        return candidates[0]
+
+    def remove_copath(self, a: str, b: str, process: str | None = None) -> "Model":
+        edge = self._one_copath(a, b, process)
+        if edge is None:
+            raise KeyError(
+                f"no co-path between {a!r} and {b!r}"
+                + (f" in process {process!r}" if process else "")
+            )
+        del self._copaths[(edge.a, edge.b, edge.process)]
         self._touch()
         return self
 
     def copath_value(self, a: str, b: str, process: str | None = None) -> sp.Expr | None:
-        first, second = (a, b) if a <= b else (b, a)
-        resolved = process if process is not None else f"{first}--{second}"
-        edge = self._copaths.get((first, second, resolved))
+        """The coefficient of the co-path joining ``a`` and ``b``, or None if there is none.
+
+        ``process`` is needed only when the pair carries more than one co-path.
+        """
+        edge = self._one_copath(a, b, process)
         return None if edge is None else edge.coefficient
 
     def remove_path(self, src: str, dst: str) -> "Model":

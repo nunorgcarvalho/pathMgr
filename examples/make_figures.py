@@ -118,6 +118,36 @@ def pair_with_two_children() -> tuple[pm.Model, Layout]:
     return model, layout
 
 
+def allele_transmission_motif() -> tuple[pm.Model, Layout]:
+    """The single-variant allele motif: the figure task-20260804-173344 asks for.
+
+    Makes the design decision visible: BOTH of each parent's alleles feed the child's allele from
+    that parent, each at 1/2, and which one was actually transmitted is not represented at all.
+    Generations as rows, explicit coordinates.
+    """
+    from pathmgr.genetics import allele_motif
+
+    motif = allele_motif(n_variants=1)
+    m = motif.model
+    layout = Layout(
+        {
+            # generation 0: mother left, father right
+            motif.z("m", "mat", 0): (0.0, 3.2), motif.z("m", "pat", 0): (2.0, 3.2),
+            motif.x("m", 0): (1.0, 1.7), motif.g("m"): (1.0, 0.3), motif.e("m"): (-1.0, 0.3),
+            motif.y("m"): (1.0, -1.1),
+            motif.z("f", "mat", 0): (7.0, 3.2), motif.z("f", "pat", 0): (9.0, 3.2),
+            motif.x("f", 0): (8.0, 1.7), motif.g("f"): (8.0, 0.3), motif.e("f"): (10.0, 0.3),
+            motif.y("f"): (8.0, -1.1),
+            # generation 1
+            motif.z("o", "mat", 0): (3.4, -3.0), motif.z("o", "pat", 0): (5.6, -3.0),
+            motif.s("o", "mat", 0): (1.4, -3.0), motif.s("o", "pat", 0): (7.6, -3.0),
+            motif.x("o", 0): (4.5, -4.5), motif.g("o"): (4.5, -5.9), motif.e("o"): (6.9, -5.9),
+            motif.y("o"): (4.5, -7.3),
+        }
+    )
+    return m, layout
+
+
 def emit(name: str, model: pm.Model, layout: Layout, out: Path, style: DiagramStyle, **kwargs):
     (out / f"{name}.tikz").write_text(to_tikz(model, layout=layout, style=style, **kwargs))
     to_image(model, out / f"{name}.png", layout=layout, style=style, dpi=200, **kwargs)
@@ -143,6 +173,9 @@ def main(out: Path) -> None:
 
     unit_model, unit_layout = pair_with_two_children()
     emit("am_unit", unit_model, unit_layout, out, tidy)
+
+    allele_transmission, allele_transmission_layout = allele_transmission_motif()
+    emit("allele_transmission", allele_transmission, allele_transmission_layout, out, tidy)
 
     # -- the figure this project exists to make ---------------------------------------
     tracer = pm.WrightTracer(allele_model)

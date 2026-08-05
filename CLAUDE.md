@@ -52,6 +52,7 @@ src/pathmgr/
     tikz.py             TikZ export + pdflatex compilation
     raster.py           PNG/SVG/PDF via matplotlib (imported lazily)
   genetics/             the genetics layer, built on core
+    alleles.py          the allele-level transmission motif ← allele_motif
     pedigree.py         unroll generations into a path model     (task-…-151350)
     am.py               AM dynamics + equilibrium fixed point    (task-…-151351)
 tests/
@@ -65,6 +66,7 @@ tests/
   test_validation_models.py   two hand-encoded models, checked to round-trip
   test_am_spec_spike.py       AM unit vs. the writeup's boxed results
   test_copath.py              co-paths: Sunde's rules, the allele-level decisive test
+  test_alleles.py             the allele motif and its validation table
   test_relative_covariance_section1.py   Section 1 derived by the engine
 scripts/
   profile_ram.py              RAM engine profile + the AM copath reference model
@@ -75,6 +77,7 @@ examples/
   am_equilibrium_handwritten.pmg   superseded encoding, kept as a regression fixture
 docs/
   profile_ram.md              measured timings + the assortment-representation trap
+  profile_alleles.md          measured M limit for the allele motif
   figures/                    generated diagrams (tikz + png + pdf)
 ```
 
@@ -333,6 +336,48 @@ made it look absent here. Check both, or just try compiling `\usetikzlibrary{X}`
 
 matplotlib is an optional extra (`pip install -e ".[render]"`) imported lazily, so `import pathmgr`
 never needs a drawing dependency — a test asserts that.
+
+## The allele-level motif
+
+```python
+from pathmgr.genetics import allele_motif
+motif = allele_motif(n_variants=2, n_children=2)
+motif.z("m", "mat", 0)    # the allele m inherited FROM THEIR MOTHER at variant 0
+motif.x("o", 0)           # the child's diploid genotype at variant 0
+```
+
+Alleles are indexed by **parental origin, not by transmission**. "Transmitted" is defined relative
+to a chosen descendant, so it is not a property of an individual and cannot be carried up a
+pedigree; maternal/paternal origin is intrinsic, which makes the motif reusable at every
+parent–child pair. Transmission coefficients are **1/2, not sqrt(1/2)** — they are regression
+coefficients, and `E[child's allele | mother] = (A + B)/2`.
+
+**The only cross-couple statement in the model is one co-path between the founders' phenotypes.**
+Every allele covariance, the offspring's linkage disequilibrium, and the departure from
+Hardy–Weinberg are *derived*. Replace that co-path with a bidirected edge and all of them go to
+exactly zero — which is the sharpest test of the co-path there is.
+
+Two results worth knowing:
+
+- **`Var[g_o] = V_A + rho_g V_A / 2` is exact, not a polygenic approximation.** The diagonal and
+  off-diagonal contributions combine into a perfect square,
+  `sum_k beta_k^4 + sum_{k≠k'} beta_k^2 beta_k'^2 = (sum_k beta_k^2)^2`.
+- **Per-variant inflation is `1/M` of the total.** Be careful which ratio:
+  `diagonal/(diagonal + off_diagonal) = 1/M` is the share, while `diagonal/off_diagonal = 1/(M-1)`.
+  The share is the rigorous version of the hand-wave, and it is *why the g-level model is
+  legitimate*.
+
+**Segregation residuals are not optional.** The child's genotype is not determined by the parents'
+— only its conditional distribution is. `Var(x_parent/2) = 1/4` but the child's allele needs
+variance `1/2`, and the gap is meiosis. Omit them and you have written down blending inheritance,
+which halves `V_A` every generation (there is a test that does exactly this and checks it halves).
+`Var(s) = 1/4` holds **only while the transmitting parent's two alleles are uncorrelated** — true
+for founders, so this motif is exact, but the offspring acquire
+`c = beta_k^2 rho_y/(4 V_P)`, so a third generation needs `1/4 - c/2`. That is where it first bites
+for the pedigree unroller.
+
+See [docs/profile_alleles.md](docs/profile_alleles.md): comfortable to M = 12, but **M = 2 is the
+right size to work at** — every result is visible there and the expressions stay readable.
 
 ## The correctness property — do not let this rot
 

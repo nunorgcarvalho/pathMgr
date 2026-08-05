@@ -200,6 +200,8 @@ def _imported_models() -> dict[str, pm.Model]:
     from profile_ram import lineage  # scripts/profile_ram.py -- the directed AM encoding
     from test_am_spec_spike import am_pair_with_two_children
     from test_copath import allele_level_pair, mated_pair, shared_partner
+
+    from pathmgr.genetics import allele_motif
     from test_validation_models import bivariate_regression, relative_covariance_section1
 
     root = Path(__file__).resolve().parent.parent
@@ -216,6 +218,9 @@ def _imported_models() -> dict[str, pm.Model]:
         "co-path AM example": pm.from_text(
             (root / "examples" / "am_equilibrium.pmg").read_text(), name="AM co-path"
         ),
+        # the allele-level motif (task-20260804-173344); M=1 keeps the agreement sweep quick
+        "allele motif M=1": allele_motif(n_variants=1).model,
+        "allele motif M=2 two children": allele_motif(n_variants=2, n_children=2).model,
         "AM handwritten (superseded)": pm.from_text(
             (root / "examples" / "am_equilibrium_handwritten.pmg").read_text(),
             name="AM handwritten",
