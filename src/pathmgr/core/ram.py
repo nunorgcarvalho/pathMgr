@@ -141,6 +141,9 @@ class RAMEngine:
         self._copath_sequences = 0
         self._revision: int | None = None
         self._sigma: sp.Matrix | None = None
+        #: the co-path-free Sigma; the full one is built from it only when actually asked for
+        self._sigma0: sp.Matrix | None = None
+        self._sigma_full: sp.Matrix | None = None
         self._order: tuple[str, ...] = ()
         self._index: dict[str, int] = {}
         self._used_inverse: bool = False
@@ -165,10 +168,26 @@ class RAMEngine:
 
     # -- the matrices -----------------------------------------------------------------
     def sigma(self) -> sp.Matrix:
-        """The full model-implied covariance matrix over **all** nodes, latents included."""
+        """The full model-implied covariance matrix over **all** nodes, latents included.
+
+        With co-paths this is the expensive object: every co-path sequence contributes an outer
+        product over the whole matrix. :meth:`cov` does **not** go through it -- see
+        :meth:`_copath_entry` -- so asking for one covariance of a deep pedigree is cheap even
+        when materialising all of Sigma would not be.
+        """
         self._refresh()
-        assert self._sigma is not None
-        return self._sigma
+        assert self._sigma0 is not None
+        if not self.model.has_copaths or self._sigma0.rows == 0:
+            return self._sigma0
+        if self._sigma_full is None:
+            self._sigma_full = self._apply_copaths(self._sigma0)
+        return self._sigma_full
+
+    def sigma_copath_free(self) -> sp.Matrix:
+        """Sigma with every co-path removed -- the object co-path chains are assembled from."""
+        self._refresh()
+        assert self._sigma0 is not None
+        return self._sigma0
 
     def sigma_observed(self) -> tuple[sp.Matrix, tuple[str, ...]]:
         """``(F Sigma F^T, observed names)`` -- a view on :meth:`sigma`, not the primary object."""
@@ -201,7 +220,10 @@ class RAMEngine:
         """
         self._refresh()
         self._require(x, y)
-        expr = self._sigma[self._index[x], self._index[y]]
+        if self.model.has_copaths and self._sigma_full is None:
+            expr = self._copath_entry(self._index[x], self._index[y])
+        else:
+            expr = self.sigma()[self._index[x], self._index[y]]
         return self._finish(expr, form, apply_assumptions)
 
     def var(
@@ -285,9 +307,67 @@ class RAMEngine:
         else:
             self._sigma = self._sigma_via_inverse(A, S)
             self._used_inverse = True
-        if self.model.has_copaths and order:
-            self._sigma = self._apply_copaths(self._sigma)
+        self._sigma0 = self._sigma
+        self._sigma_full = None
         self._revision = self.model.revision
+
+    def _oriented_copaths(self, index: dict[str, int]):
+        """Each co-path in both orientations, as ``(process, near, far, coefficient)``."""
+        oriented = []
+        for copath in self.model.copaths:
+            if copath.coefficient == 0:
+                continue
+            for a, b in sorted({(copath.a, copath.b), (copath.b, copath.a)}):
+                oriented.append((copath.process, index[a], index[b], copath.coefficient))
+        return oriented
+
+    def _copath_entry(self, row: int, column: int) -> sp.Expr:
+        """One entry of Sigma, without materialising the whole matrix.
+
+        The same sum over sequences of distinct-process co-paths as :meth:`_apply_copaths`, but
+        for a single ``(row, column)``. Each sequence contributes the **scalar**
+
+            sigma0[row, u_1] * mu_1 * sigma0[v_1, u_2] * ... * mu_k * sigma0[v_k, column]
+
+        where the full-matrix version has to form an outer product instead. That is an ``n^2``
+        saving per sequence, and on a deep pedigree it is the difference between usable and not:
+        the number of sequences grows with pedigree depth, so paying ``n^2`` for each is what made
+        a five-generation unroll take minutes. Asking for one covariance is the common case.
+        """
+        sigma0 = self.sigma_copath_free()
+        oriented = self._oriented_copaths(self._index)
+        total = sigma0[row, column]
+        if not oriented:
+            return total
+        self._copath_sequences = 0
+
+        def extend(far: int, used: frozenset[str], scalar: sp.Expr) -> None:
+            nonlocal total
+            self._copath_sequences += 1
+            if self._copath_sequences > self.max_copath_sequences:
+                raise CoPathLimitError(
+                    f"more than {self.max_copath_sequences} co-path sequences for one entry; "
+                    f"the result would be incomplete. The count grows with the number of mating "
+                    f"processes linked by nonzero covariance. Raise max_copath_sequences if you "
+                    f"can afford it."
+                )
+            tail = sigma0[far, column]
+            if tail != 0:
+                total = self._norm(total + scalar * tail)
+            for process, near2, far2, mu2 in oriented:
+                if process in used:
+                    continue
+                link = sigma0[far, near2]
+                if link == 0:
+                    continue
+                extend(far2, used | {process}, self._norm(scalar * link * mu2))
+
+        for process, near, far, mu in oriented:
+            head = sigma0[row, near]
+            if head == 0:
+                continue
+            extend(far, frozenset({process}), self._norm(head * mu))
+        return total
 
     def _apply_copaths(self, sigma0: sp.Matrix) -> sp.Matrix:
         """Add every co-path chain's contribution to the co-path-free ``sigma0``.

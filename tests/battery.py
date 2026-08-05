@@ -201,7 +201,7 @@ def _imported_models() -> dict[str, pm.Model]:
     from test_am_spec_spike import am_pair_with_two_children
     from test_copath import allele_level_pair, mated_pair, shared_partner
 
-    from pathmgr.genetics import allele_motif
+    from pathmgr.genetics import allele_motif, am_pedigree, g_level_model
     from test_validation_models import bivariate_regression, relative_covariance_section1
 
     root = Path(__file__).resolve().parent.parent
@@ -221,6 +221,9 @@ def _imported_models() -> dict[str, pm.Model]:
         # the allele-level motif (task-20260804-173344); M=1 keeps the agreement sweep quick
         "allele motif M=1": allele_motif(n_variants=1).model,
         "allele motif M=2 two children": allele_motif(n_variants=2, n_children=2).model,
+        # the unrolled pedigree (task-20260804-151350); depth 1 keeps the sweep quick
+        "AM pedigree depth 1": g_level_model(am_pedigree(1)).model,
+        "AM pedigree half-sibs": g_level_model(am_pedigree(1, half_sib_at=0)).model,
         "AM handwritten (superseded)": pm.from_text(
             (root / "examples" / "am_equilibrium_handwritten.pmg").read_text(),
             name="AM handwritten",

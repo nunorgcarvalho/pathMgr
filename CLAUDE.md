@@ -53,7 +53,7 @@ src/pathmgr/
     raster.py           PNG/SVG/PDF via matplotlib (imported lazily)
   genetics/             the genetics layer, built on core
     alleles.py          the allele-level transmission motif ← allele_motif
-    pedigree.py         unroll generations into a path model     (task-…-151350)
+    pedigree.py         pedigree scaffolding + the g-level unroller ← am_pedigree, g_level_model
     am.py               AM dynamics + equilibrium fixed point    (task-…-151351)
 tests/
   conftest.py                 shared helpers: ram_sigma wrapper, canonical() comparison
@@ -67,6 +67,7 @@ tests/
   test_am_spec_spike.py       AM unit vs. the writeup's boxed results
   test_copath.py              co-paths: Sunde's rules, the allele-level decisive test
   test_alleles.py             the allele motif and its validation table
+  test_pedigree.py            the unroller; pins generation indexing at low t
   test_relative_covariance_section1.py   Section 1 derived by the engine
 scripts/
   profile_ram.py              RAM engine profile + the AM copath reference model
@@ -78,6 +79,7 @@ examples/
 docs/
   profile_ram.md              measured timings + the assortment-representation trap
   profile_alleles.md          measured M limit for the allele motif
+  profile_pedigree.md         measured depth limit, symbolic vs numeric
   figures/                    generated diagrams (tikz + png + pdf)
 ```
 
@@ -405,6 +407,46 @@ for the pedigree unroller.
 See [docs/profile_alleles.md](docs/profile_alleles.md): comfortable to M = 12, but **M = 2 is the
 right size to work at** — every result is visible there and the expressions stay readable.
 
+## The pedigree unroller
+
+```python
+from pathmgr.genetics import am_pedigree, g_level_model, AMParameters
+pedigree = am_pedigree(n_generations=2, children_per_couple=2, half_sib_at=0)
+unrolled  = g_level_model(pedigree)                        # symbolic
+fast      = g_level_model(pedigree, AMParameters(values={"V_A0": 0.4, "V_E": 0.6, "rho_y": 0.3}))
+pedigree.relationship("i0_0", "i2_0")   # 'lineal' — derived from structure, never stored
+```
+
+`Pedigree` is **structure only** and knows no genetics; the builders walk it. A test asserts that
+boundary against the code of `Pedigree`/`am_pedigree` rather than the module text.
+
+**Two things here are easy to get wrong quietly, and both are pinned by tests.**
+
+*Generation indexing.* The relative-pair formulas index to the **parents'** generation:
+`Cov[sibs] = Cov[g_parent, g_child] = V_A(t)(1+rho_g(t))/2`. Using the offspring's `V_A` is wrong by
+~4e-4 near equilibrium — indistinguishable from numerical noise — but by 1.6e-2 at the first
+generation. **Test the indexing at low `t`**; near equilibrium it would pass either way.
+
+*`((1+rho_g)/2)^d` is equilibrium-only.* On a finite unroll a lineal pair spanning several
+generations is a **chained product using each generation's own `rho_g`**, not a power of one. Never
+reconcile a mismatch by adjusting the formula. At equilibrium `V_A` stops moving, the index becomes
+invisible, and the writeup's boxed forms come back.
+
+`mu_t = rho_y/V_P(t)` is recomputed per generation, and `V_A(t)`/`V_P(t)` are carried as
+**per-generation symbols** so each coefficient stays one ratio however deep the pedigree goes. That
+also makes the indexing visible in the rendered figure — the two co-paths in
+[docs/figures/am_pedigree.pdf](docs/figures/am_pedigree.pdf) are labelled `rho_y/(V_A0+V_E)` and
+`rho_y/(V_A1+V_E)`.
+
+`V_K` is **held constant** at `V_A(0)/2` — an explicit `AMParameters` field, not an assumption. That
+is the model Sunde et al. and the writeup both use. Which of `rho_y`/`mu` is held constant is also
+explicit: holding `mu` is a *different model*, available so the difference can be shown rather than
+stumbled into.
+
+Depth: **symbolic to ~6 generations, numeric past 10** — see
+[docs/profile_pedigree.md](docs/profile_pedigree.md). The split matters: use
+`AMParameters(values=...)` for trajectories.
+
 ## The correctness property — do not let this rot
 
 `tests/test_agreement.py` asserts the two engines agree symbolically (`simplify(a - b) == 0`)
@@ -438,6 +480,11 @@ result must carry the model's units so a returned expression is never scale-ambi
 A naive tracer will not terminate or will silently truncate. Finite-generation unrolling
 terminates by construction; equilibrium must come from an **explicit fixed-point solve**,
 never from "unroll a lot". A tracer must fail loudly rather than truncate.
+
+**Ask for the entry, do not build the matrix.** With co-paths, materialising the whole `Sigma` pays
+an `O(n^2)` outer product per co-path sequence while a single entry pays `O(1)` — a 300× difference
+at five generations. `RAMEngine.cov` computes the entry directly and never materialises `Sigma` when
+co-paths are present. `sigma()` is still the primary object; it is just the wrong tool at depth.
 
 **Symbolic blowup.** sympy expressions grow fast with pedigree depth. Simplify deliberately
 at defined points; do not assume `simplify()` is cheap. For a recursive (acyclic) model,
