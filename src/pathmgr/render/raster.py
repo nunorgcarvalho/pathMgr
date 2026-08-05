@@ -26,7 +26,13 @@ from pathlib import Path
 
 from ..core.model import Model
 from .layout import Layout
-from .placement import boundary_point, labelled_edges, node_rect, place_labels
+from .placement import (
+    boundary_point,
+    labelled_edges,
+    node_rect,
+    place_labels,
+    route_edges,
+)
 from .style import DiagramStyle
 from .tikz import highlight_sets
 
@@ -89,6 +95,7 @@ def draw_on_axes(
     highlighting = highlight is not None
 
     placements = place_labels(model, layout, style, labelled_edges(model, style))
+    bends = route_edges(model, layout, style) if style.route_edges_around_nodes else {}
     rects = {name: node_rect(name, model, layout, style) for name in model.names}
 
     def colour_for(default: str, is_hot: bool) -> str:
@@ -163,10 +170,12 @@ def draw_on_axes(
         end = boundary_point(
             layout[edge.dst], layout[edge.src], rects[edge.dst], style.node_clearance
         )
+        bend = bends.get((edge.src, edge.dst), 0.0)
         axes.add_patch(
             FancyArrowPatch(
                 start,
                 end,
+                connectionstyle=f"arc3,rad={-bend / 100.0}",
                 arrowstyle="-|>",
                 mutation_scale=style.arrow_head_size,
                 shrinkA=0,
@@ -238,7 +247,7 @@ def draw_on_axes(
         index = seen_pairs.get(pair, 0)
         seen_pairs[pair] = index + 1
         is_hot = pair in hot_copaths
-        rad = -0.12 * index
+        rad = -0.12 * index if index else -bends.get((copath.a, copath.b), 0.0) / 100.0
         start = boundary_point(
             layout[copath.a], layout[copath.b], rects[copath.a], style.node_clearance
         )

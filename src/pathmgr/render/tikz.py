@@ -38,7 +38,7 @@ from pathlib import Path
 
 from ..core.model import Model
 from .layout import Layout
-from .placement import labelled_edges, place_labels
+from .placement import labelled_edges, place_labels, route_edges
 from .style import DiagramStyle
 
 __all__ = [
@@ -168,6 +168,9 @@ def to_tikz(
     body = _preamble(style, colours)
     lines: list[str] = []
     placements = place_labels(model, layout, style, labelled_edges(model, style))
+    # bend only the edges whose straight path would run through a third node; everything else is
+    # left exactly as it was, so a figure with no crossings is byte-identical to before routing
+    bends = route_edges(model, layout, style) if style.route_edges_around_nodes else {}
 
     # -- nodes -------------------------------------------------------------------------
     for variable in model.variables:
@@ -185,9 +188,14 @@ def to_tikz(
             "pmDirected", style.directed_colour, style, hot, highlighting, colours
         )
         label = style.edge_label((edge.src, edge.dst), edge.coeff)
+        node = _label_node(
+            label, style, hot, highlighting, colours,
+            placements.get((edge.src, edge.dst)), _direction(layout, edge.src, edge.dst),
+        )
+        connector = _bend_connector(bends.get((edge.src, edge.dst), 0.0))
         body.append(
-            f"  \\draw[{options}] ({_node_id(edge.src)}) -- "
-            f"{_label_node(label, style, hot, highlighting, colours)}({_node_id(edge.dst)});"
+            f"  \\draw[{options}] ({_node_id(edge.src)}) {connector} "
+            f"{node}({_node_id(edge.dst)});"
         )
 
     # -- bidirected covariances --------------------------------------------------------
@@ -233,7 +241,10 @@ def to_tikz(
             label, style, hot, highlighting, colours,
             placements.get((copath.a, copath.b)), _direction(layout, copath.a, copath.b),
         )
-        connector = "--" if seen == 0 else f"to[bend right={12 * seen}]"
+        if seen == 0:
+            connector = _bend_connector(bends.get((copath.a, copath.b), 0.0))
+        else:
+            connector = f"to[bend right={12 * seen}]"
         body.append(
             f"  \\draw[{options}] ({_node_id(copath.a)}) {connector} "
             f"{node}({_node_id(copath.b)});"
@@ -262,6 +273,18 @@ def to_tikz(
     lines.extend(colours.declarations())
     lines.extend(body)
     return "\n".join(lines) + "\n"
+
+
+def _bend_connector(bend: float) -> str:
+    """``--`` for a straight edge, ``to[bend ...]`` for a routed one.
+
+    Straight is emitted as plain ``--`` rather than ``to[bend left=0]`` so that an unrouted figure
+    is byte-identical to what it was before edge routing existed.
+    """
+    if not bend:
+        return "--"
+    side = "left" if bend > 0 else "right"
+    return f"to[bend {side}={abs(bend):.0f}]"
 
 
 def _direction(layout: Layout, a: str, b: str) -> tuple[float, float]:

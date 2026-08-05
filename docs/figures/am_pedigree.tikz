@@ -8,31 +8,31 @@
   pmCopath/.style={line width=1.6pt},
   pmLabel/.style={midway, fill=white, inner sep=1pt},
 ]
-  \node[pmLatent] (g_i0_0) at (-1.850,1.050) {$g_{0_0}$};
-  \node[pmLatent] (e_i0_0) at (-0.550,1.050) {$e_{0_0}$};
-  \node[pmObserved] (y_i0_0) at (-1.300,0.000) {$y_{0_0}$};
-  \node[pmLatent] (g_i0_1) at (0.750,1.050) {$g_{0_1}$};
-  \node[pmLatent] (e_i0_1) at (2.050,1.050) {$e_{0_1}$};
-  \node[pmObserved] (y_i0_1) at (1.300,0.000) {$y_{0_1}$};
-  \node[pmLatent] (g_i1_0) at (-3.150,-2.350) {$g_{1_0}$};
-  \node[pmLatent] (e_i1_0) at (-1.850,-2.350) {$e_{1_0}$};
-  \node[pmObserved] (y_i1_0) at (-2.600,-3.400) {$y_{1_0}$};
-  \node[pmLatent] (s_i1_0) at (-4.350,-2.350) {$s_{1_0}$};
-  \node[pmLatent] (g_i1_1) at (2.050,-2.350) {$g_{1_1}$};
-  \node[pmLatent] (e_i1_1) at (3.350,-2.350) {$e_{1_1}$};
-  \node[pmObserved] (y_i1_1) at (2.600,-3.400) {$y_{1_1}$};
-  \node[pmLatent] (s_i1_1) at (0.850,-2.350) {$s_{1_1}$};
-  \node[pmLatent] (g_i1_2) at (-0.550,-2.350) {$g_{1_2}$};
-  \node[pmLatent] (e_i1_2) at (0.750,-2.350) {$e_{1_2}$};
-  \node[pmObserved] (y_i1_2) at (0.000,-3.400) {$y_{1_2}$};
-  \node[pmLatent] (g_i2_0) at (-1.850,-5.750) {$g_{2_0}$};
-  \node[pmLatent] (e_i2_0) at (-0.550,-5.750) {$e_{2_0}$};
-  \node[pmObserved] (y_i2_0) at (-1.300,-6.800) {$y_{2_0}$};
-  \node[pmLatent] (s_i2_0) at (-3.050,-5.750) {$s_{2_0}$};
-  \node[pmLatent] (g_i2_1) at (0.750,-5.750) {$g_{2_1}$};
-  \node[pmLatent] (e_i2_1) at (2.050,-5.750) {$e_{2_1}$};
-  \node[pmObserved] (y_i2_1) at (1.300,-6.800) {$y_{2_1}$};
-  \node[pmLatent] (s_i2_1) at (-0.450,-5.750) {$s_{2_1}$};
+  \node[pmLatent] (g_i0_0) at (-2.300,1.700) {$g_{0_0}$};
+  \node[pmLatent] (e_i0_0) at (-0.950,1.700) {$e_{0_0}$};
+  \node[pmObserved] (y_i0_0) at (-2.300,0.000) {$y_{0_0}$};
+  \node[pmLatent] (g_i0_1) at (2.300,1.700) {$g_{0_1}$};
+  \node[pmLatent] (e_i0_1) at (3.650,1.700) {$e_{0_1}$};
+  \node[pmObserved] (y_i0_1) at (2.300,0.000) {$y_{0_1}$};
+  \node[pmLatent] (g_i1_0) at (-4.600,-3.800) {$g_{1_0}$};
+  \node[pmLatent] (e_i1_0) at (-3.250,-3.800) {$e_{1_0}$};
+  \node[pmObserved] (y_i1_0) at (-4.600,-5.500) {$y_{1_0}$};
+  \node[pmLatent] (s_i1_0) at (-5.950,-3.800) {$s_{1_0}$};
+  \node[pmLatent] (g_i1_1) at (4.600,-3.800) {$g_{1_1}$};
+  \node[pmLatent] (e_i1_1) at (5.950,-3.800) {$e_{1_1}$};
+  \node[pmObserved] (y_i1_1) at (4.600,-5.500) {$y_{1_1}$};
+  \node[pmLatent] (s_i1_1) at (3.250,-3.800) {$s_{1_1}$};
+  \node[pmLatent] (g_i1_2) at (0.000,-3.800) {$g_{1_2}$};
+  \node[pmLatent] (e_i1_2) at (1.350,-3.800) {$e_{1_2}$};
+  \node[pmObserved] (y_i1_2) at (0.000,-5.500) {$y_{1_2}$};
+  \node[pmLatent] (g_i2_0) at (-2.300,-9.300) {$g_{2_0}$};
+  \node[pmLatent] (e_i2_0) at (-0.950,-9.300) {$e_{2_0}$};
+  \node[pmObserved] (y_i2_0) at (-2.300,-11.000) {$y_{2_0}$};
+  \node[pmLatent] (s_i2_0) at (-3.650,-9.300) {$s_{2_0}$};
+  \node[pmLatent] (g_i2_1) at (2.300,-9.300) {$g_{2_1}$};
+  \node[pmLatent] (e_i2_1) at (3.650,-9.300) {$e_{2_1}$};
+  \node[pmObserved] (y_i2_1) at (2.300,-11.000) {$y_{2_1}$};
+  \node[pmLatent] (s_i2_1) at (0.950,-9.300) {$s_{2_1}$};
   \draw[pmDirected, draw=black] (g_i0_0) -- (y_i0_0);
   \draw[pmDirected, draw=black] (e_i0_0) -- (y_i0_0);
   \draw[pmDirected, draw=black] (g_i0_1) -- (y_i0_1);
@@ -59,6 +59,6 @@
   \draw[pmDirected, draw=black] (g_i1_0) -- node[pmLabel] {$\frac{1}{2}$} (g_i2_1);
   \draw[pmDirected, draw=black] (g_i1_2) -- node[pmLabel] {$\frac{1}{2}$} (g_i2_1);
   \draw[pmDirected, draw=black] (s_i2_1) -- (g_i2_1);
-  \draw[pmCopath, draw=pmCB03A2E] (y_i0_0) -- node[pmLabel, xshift=-0.000cm, yshift=0.400cm] {$\frac{\rho_{y}}{V_{A0} + V_{E}}$} (y_i0_1);
-  \draw[pmCopath, draw=pmCB03A2E] (y_i1_0) -- node[pmLabel, xshift=-0.000cm, yshift=0.400cm] {$\frac{\rho_{y}}{V_{A 1} + V_{E}}$} (y_i1_2);
+  \draw[pmCopath, draw=pmCB03A2E] (y_i0_0) -- node[pmLabel] {$\frac{\rho_{y}}{V_{A0} + V_{E}}$} (y_i0_1);
+  \draw[pmCopath, draw=pmCB03A2E] (y_i1_0) -- node[pmLabel, xshift=-0.000cm, yshift=0.220cm] {$\frac{\rho_{y}}{V_{A 1} + V_{E}}$} (y_i1_2);
 \end{tikzpicture}

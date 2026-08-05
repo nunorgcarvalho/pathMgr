@@ -332,6 +332,14 @@ ellipse and over-shortens for a small node, which is how arrowheads end up burie
 node fills → edges → node text, in *both* back ends, so an edge crossing an unrelated node stays
 visible without ever running across a label.
 
+**No edge is drawn through a third node.** Two mechanisms, in that order. The pedigree layout
+places children near their parents and gives each individual a block narrower than the spacing
+between people, so most crossings never arise — those spacing defaults were found by *measuring*
+crossings over a grid and are load-bearing, not taste. Whatever still crosses gets a targeted bend
+from `route_edges`, which tries zero first, so an edge with a clear path is never touched and clean
+figures stay byte-identical. `edge_node_crossings` is the geometric check, kept as a test at three,
+four and five generations because the count grows with depth.
+
 **Edge labels avoid collisions, deterministically.** A greedy candidate-and-score pass
 (positions along the edge × perpendicular offsets) scored against node boxes and already-placed
 labels. The exact midpoint is always the first candidate, so an uncluttered diagram is unchanged.

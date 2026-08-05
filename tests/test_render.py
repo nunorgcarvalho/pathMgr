@@ -621,3 +621,113 @@ def test_the_highlighted_allele_figure_compiles_with_its_two_line_caption(tmp_pa
         caption_name=r"\operatorname{Cov}\left[z^{(m)}_{m}, z^{(m)}_{f}\right]",
     )
     assert out.exists() and out.stat().st_size > 1000
+
+
+# ======================================================================================
+# task-20260804-214554: no edge may be drawn through a third node
+# ======================================================================================
+def _pedigree(n_generations):
+    from pathmgr.genetics import am_pedigree, g_level_model
+
+    unrolled = g_level_model(am_pedigree(n_generations))
+    return unrolled.model, unrolled.layout()
+
+
+@pytest.mark.parametrize("generations", [2, 3, 4, 5])
+def test_no_edge_crosses_a_third_node_in_a_pedigree(generations):
+    """The geometric check kept as a test, since the count grows with depth.
+
+    An arrow driven through a variable's box reads as a mistake, and a path grazing an ellipse can
+    be misread as a doubled border or even a variance self-loop. Nothing about the covariances is
+    affected -- this is purely what the figure looks like -- but the pedigree figure is the one
+    most likely to end up in the writeup.
+    """
+    from pathmgr.render.placement import edge_node_crossings, route_edges
+
+    model, layout = _pedigree(generations)
+    style = DiagramStyle(show_variances=False)
+    bends = route_edges(model, layout, style)
+    crossings = edge_node_crossings(
+        model, layout, style, margin=style.edge_clearance, bends=bends
+    )
+    assert crossings == [], "\n".join(str(c) for c in crossings)
+
+
+def test_the_layout_does_most_of_the_work_and_routing_only_mops_up():
+    """If routing has to bend a lot of edges, the layout has regressed."""
+    from pathmgr.render.placement import route_edges
+
+    for generations in (2, 3, 4, 5):
+        model, layout = _pedigree(generations)
+        bends = route_edges(model, layout, DiagramStyle(show_variances=False))
+        assert len(bends) <= generations, (
+            f"{generations} generations needed {len(bends)} bends; the spacing defaults are "
+            f"load-bearing and something has narrowed the transmission corridor"
+        )
+
+
+def test_crossing_detection_actually_detects():
+    """A guard on the guard: the check must fail on a layout that really does cross."""
+    from pathmgr.render.placement import edge_node_crossings
+
+    model = pm.Model()
+    model.add_vars("a", "middle", "b")
+    model.add_path("a", "b", "q")
+    model.add_variance("a", "V")
+    # `middle` sits exactly on the a -> b line
+    crossings = edge_node_crossings(
+        model, Layout({"a": (0, 0), "middle": (2, 0), "b": (4, 0)}), DiagramStyle()
+    )
+    assert [c.through for c in crossings] == ["middle"]
+    # and moving it off the line clears it
+    assert edge_node_crossings(
+        model, Layout({"a": (0, 0), "middle": (2, 3), "b": (4, 0)}), DiagramStyle()
+    ) == []
+
+
+def test_routing_is_a_no_op_when_nothing_crosses():
+    """Which is what keeps the already-approved small figures byte-identical."""
+    from pathmgr.render.placement import route_edges
+
+    model = three_edge_model()
+    layout = Layout({"g_m": (0, 0), "e_m": (1.7, 0), "y_m": (0.85, -1.9),
+                     "g_f": (5.1, 0), "e_f": (6.8, 0), "y_f": (5.95, -1.9)})
+    assert route_edges(model, layout, DiagramStyle()) == {}
+    tex = to_tikz(model, layout=layout)
+    # every DIRECTED edge stays a plain straight `--`. (Bidirected edges always use `to[bend]`;
+    # curvature is part of what distinguishes them, and routing does not touch it.)
+    directed = [line for line in tex.splitlines() if "pmDirected," in line]
+    assert directed
+    assert all(") -- " in line for line in directed)
+    assert not any("to[bend" in line for line in directed)
+
+
+def test_routing_is_deterministic():
+    from pathmgr.render.placement import route_edges
+
+    model, layout = _pedigree(3)
+    first = route_edges(model, layout, DiagramStyle(show_variances=False))
+    for _ in range(3):
+        assert route_edges(model, layout, DiagramStyle(show_variances=False)) == first
+    assert to_tikz(model, layout=layout) == to_tikz(model, layout=layout)
+
+
+def test_a_bent_edge_is_emitted_as_a_tikz_bend():
+    from pathmgr.render.placement import route_edges
+
+    model, layout = _pedigree(4)
+    style = DiagramStyle(show_variances=False)
+    bends = route_edges(model, layout, style)
+    assert bends, "the four-generation pedigree needs at least one bend"
+    tex = to_tikz(model, layout=layout, style=style)
+    assert "to[bend" in tex
+    assert tex.count("to[bend") >= len(bends)
+
+
+def test_routing_can_be_switched_off():
+    from pathmgr.render.placement import route_edges
+
+    model, layout = _pedigree(4)
+    off = DiagramStyle(show_variances=False, route_edges_around_nodes=False)
+    assert route_edges(model, layout, DiagramStyle(show_variances=False))
+    assert "to[bend" not in to_tikz(model, layout=layout, style=off)

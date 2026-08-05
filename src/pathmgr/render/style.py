@@ -135,6 +135,18 @@ class DiagramStyle:
     #: set False to go back to plain midpoint placement
     avoid_label_collisions: bool = True
 
+    # -- edge routing ------------------------------------------------------------------
+    #: bends (TikZ degrees) to try for an edge that would otherwise cross a third node.
+    #: 0 first, so an edge with a clear path is never touched and clean figures do not change.
+    edge_bends: tuple[float, ...] = (
+        0.0, 10.0, -10.0, 18.0, -18.0, 26.0, -26.0, 35.0, -35.0, 45.0, -45.0, 55.0, -55.0
+    )
+    #: how much clearance a routed edge should leave around an intervening node, in cm. A path
+    #: grazing an ellipse reads as a doubled node border, so this is deliberately not zero.
+    edge_clearance: float = 0.12
+    #: set False to draw every edge straight, crossings and all
+    route_edges_around_nodes: bool = True
+
     # -- highlighting -----------------------------------------------------------------
     #: multiply edge width by this for a highlighted edge
     highlight_scale: float = 2.6

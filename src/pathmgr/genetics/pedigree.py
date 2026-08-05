@@ -206,22 +206,56 @@ class Pedigree:
         return "unrelated"
 
     def generation_order(self, t: int) -> tuple[str, ...]:
-        """Individuals of generation ``t``, ordered so that **partners are adjacent**.
+        """Individuals of generation ``t``, ordered for drawing. Deterministic.
 
-        Without this a non-breeding sibling can sit between a couple, and the co-path joining
-        them is then drawn straight through that sibling's node. Deterministic: couples in the
-        order they were mated, each partner pair together, then everyone else.
+        Two properties, both of which stop edges being drawn through unrelated nodes:
+
+        **Children sit near their parents.** Each individual is keyed by the mean position of its
+        parents in the row above, so a transmission edge is short and near-vertical instead of
+        spanning the figure. Without this, a child could be placed at the far end of its row from
+        its own parents, and the resulting diagonal crossed everything in between -- no amount of
+        edge bending can rescue that, because there is nowhere clear to bend to.
+
+        **Partners are adjacent.** Otherwise a non-breeding sibling sits between a couple and the
+        co-path joining them is drawn straight through that sibling.
+
+        An individual with no parents in the model (an outside partner marrying in) has no
+        ancestral position of its own, so it inherits its partner's.
         """
-        members = set(self.generation(t))
+        members = list(self.generation(t))
+        if not members:
+            return ()
+
+        above = {key: i for i, key in enumerate(self.generation_order(t - 1))} if t else {}
+
+        def ancestral_key(who: str) -> float:
+            parents = [above[p] for p in self.individuals[who].parents if p in above]
+            if parents:
+                return sum(parents) / len(parents)
+            partners = [
+                p for p in self.partners_of(who) if self.individuals[p].generation == t
+            ]
+            for partner in partners:  # marry-in: take the position of whoever they married
+                inherited = [above[p] for p in self.individuals[partner].parents if p in above]
+                if inherited:
+                    return sum(inherited) / len(inherited) + 0.5
+            return float("inf")  # unplaceable: park at the end, deterministically
+
+        members.sort(key=lambda who: (ancestral_key(who), who))
+
+        # now pull each partner next to their mate, keeping the ancestral order otherwise
         ordered: list[str] = []
-        for couple in self.couples:
-            if couple.generation != t:
+        placed: set[str] = set()
+        for who in members:
+            if who in placed:
                 continue
-            for who in (couple.mother, couple.father):
-                if who in members:
-                    members.discard(who)
-                    ordered.append(who)
-        return tuple(ordered + sorted(members))
+            ordered.append(who)
+            placed.add(who)
+            for partner in sorted(self.partners_of(who)):
+                if partner not in placed and self.individuals[partner].generation == t:
+                    ordered.append(partner)
+                    placed.add(partner)
+        return tuple(ordered)
 
     def layout(self, x_gap: float = 2.6, y_gap: float = 3.4) -> Layout:
         """Generations as rows, individuals as columns -- the natural pedigree layout."""
@@ -409,16 +443,51 @@ class UnrolledModel:
             values[self.V_A[t + 1]] = sp.together(self.V_K + current * (1 + rho_g) / 2)
         return values
 
-    def layout(self, **kwargs) -> Layout:
-        """Diagram coordinates: generations as rows, with each individual's g/e/y stacked."""
-        base = self.pedigree.layout(**kwargs)
+    #: half-width of one individual's block of nodes, in cm. Generation spacing must exceed twice
+    #: this or neighbouring people's nodes interleave -- which is how an edge belonging to one
+    #: person ends up drawn through a *different* person's node.
+    BLOCK_HALF_WIDTH = 1.35
+    #: vertical offset of ``g`` above the individual's ``y``
+    BLOCK_HEIGHT = 1.7
+    #: vertical offset of the ``s``/``e`` pair. Equal to ``BLOCK_HEIGHT``, i.e. level with
+    #: ``g`` -- a flat row works once the block is wide enough and the generations are far
+    #: enough apart; dropping them below ``g`` only narrows the transmission corridor.
+    FLANK_HEIGHT = 1.7
+
+    def layout(self, x_gap: float = 4.6, y_gap: float = 5.5) -> Layout:
+        """Diagram coordinates: generations as rows, each individual a self-contained block.
+
+        Two things about the block are load-bearing, and both were found by measuring crossings
+        rather than by eye.
+
+        **It is narrower than the spacing between people**, so no edge belonging to one individual
+        traverses another's nodes. The previous layout put ``s`` at ``x - 1.75`` while the
+        neighbour's ``e`` sat at ``x - 1.85`` -- 0.1 cm apart, and each one's edge ran through the
+        other's node.
+
+        **The generations are far enough apart that the transmission corridor is clear.**
+        Transmission is ``g -> g`` between generations, so those edges must descend past the
+        parent's own row. Making that descent steep is what keeps them off the parent's ``s`` and
+        ``e``; the defaults here were found by measuring crossings over a grid of spacings, and at
+        ``x_gap=4.6, y_gap=5.5`` the layout is crossing-free with a single edge needing a bend.
+
+            s     g     e
+                  |
+                  y
+
+        Tightening the spacing does not merely look worse -- it reintroduces crossings, so the
+        defaults are load-bearing rather than taste. ``tests/test_render.py`` asserts the count is
+        zero at three, four and five generations.
+        """
+        base = self.pedigree.layout(x_gap=x_gap, y_gap=y_gap)
+        half, top, flank = self.BLOCK_HALF_WIDTH, self.BLOCK_HEIGHT, self.FLANK_HEIGHT
         positions: dict[str, tuple[float, float]] = {}
         for key, (x, y) in base.positions.items():
-            positions[self.g(key)] = (x - 0.55, y + 1.05)
-            positions[self.e(key)] = (x + 0.75, y + 1.05)
             positions[self.y(key)] = (x, y)
+            positions[self.g(key)] = (x, y + top)
+            positions[self.e(key)] = (x + half, y + flank)
             if self.model.has_var(self.s(key)):
-                positions[self.s(key)] = (x - 1.75, y + 1.05)
+                positions[self.s(key)] = (x - half, y + flank)
         return Layout(positions, x_gap=base.x_gap, y_gap=base.y_gap)
 
 

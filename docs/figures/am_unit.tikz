@@ -30,7 +30,7 @@
   \draw[pmDirected, draw=black] (e_o1) -- (y_o1);
   \draw[pmDirected, draw=black] (g_o2) -- (y_o2);
   \draw[pmDirected, draw=black] (e_o2) -- (y_o2);
-  \draw[pmDirected, draw=black] (g_m) -- node[pmLabel] {$\frac{1}{2}$} (g_o1);
+  \draw[pmDirected, draw=black] (g_m) to[bend left=18] node[pmLabel, xshift=0.344cm, yshift=0.204cm] {$\frac{1}{2}$} (g_o1);
   \draw[pmDirected, draw=black] (g_f) -- node[pmLabel] {$\frac{1}{2}$} (g_o1);
   \draw[pmDirected, draw=black] (s_o1) -- (g_o1);
   \draw[pmDirected, draw=black] (g_m) -- node[pmLabel] {$\frac{1}{2}$} (g_o2);
