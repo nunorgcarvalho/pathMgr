@@ -71,11 +71,13 @@ tests/
   test_am_dynamics.py         trajectories, equilibrium, convergence; tested at V_P(0) != 1
   test_relative_covariance_section1.py   Section 1 derived by the engine
   test_am_lineage.py          the directed AM encoding: lineal result, equilibrium, mate corr
+  test_notebook.py            re-executes the notebook; skips without nbconvert
   fixtures/
     am_equilibrium_handwritten.pmg   superseded encoding, kept as a regression fixture
 scripts/
   scale_ram.py                developer tooling: regenerates docs/scale_ram.md
 examples/
+  pathmgr_tour.ipynb          THE documentation — four acts, committed executed with outputs
   spec_demo.py                runnable tour: both front-ends, engine, tracer, co-paths
   make_figures.py             produces examples/figures/ — including the highlighted chain
   am_equilibrium.pmg          the AM model as text, using a co-path

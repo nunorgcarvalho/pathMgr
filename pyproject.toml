@@ -12,6 +12,9 @@ dependencies = ["sympy>=1.12"]
 
 [project.optional-dependencies]
 render = ["matplotlib>=3.8"]
+# the notebook (examples/pathmgr_tour.ipynb) and the test that re-executes it. ipykernel is the
+# kernel nbconvert actually runs the cells in; without it execution fails at kernel startup.
+notebook = ["jupyter-client>=8.0", "ipykernel>=6.0", "nbformat>=5.9", "nbconvert>=7.0"]
 dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
