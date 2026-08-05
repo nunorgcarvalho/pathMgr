@@ -100,14 +100,14 @@ def siblings_sharing_a_genetic_factor() -> pm.Model:
     """
     return pm.from_text(
         """
-        latent: g_m, g_f, g_1, g_2, s_1, s_2, e_1, e_2
+        latent: g_m, g_p, g_1, g_2, s_1, s_2, e_1, e_2
         positive: V_A, V_E, V_K
-        g_1 ~ 1/2*g_m + 1/2*g_f + s_1
-        g_2 ~ 1/2*g_m + 1/2*g_f + s_2
+        g_1 ~ 1/2*g_m + 1/2*g_p + s_1
+        g_2 ~ 1/2*g_m + 1/2*g_p + s_2
         y_1 ~ g_1 + e_1
         y_2 ~ g_2 + e_2
         g_m ~~ V_A*g_m
-        g_f ~~ V_A*g_f
+        g_p ~~ V_A*g_p
         s_1 ~~ V_K*s_1
         s_2 ~~ V_K*s_2
         e_1 ~~ V_E*e_1
@@ -249,18 +249,18 @@ def lineage(generations: int) -> pm.Model:
         # disturbance covariance -- validate() warns about it, correctly.
         m.add_cov(f"g_{tag}", f"e_{tag}", -rho_g * b_e * V_P)
 
-    def child(tag: str, mother: str, father: str) -> None:
+    def child(tag: str, maternal: str, paternal: str) -> None:
         person(tag)
         m.add_var(f"s_{tag}", latent=True)
         m.add_variance(f"s_{tag}", V_K)
-        m.add_path(f"g_{mother}", f"g_{tag}", sp.Rational(1, 2))
-        m.add_path(f"g_{father}", f"g_{tag}", sp.Rational(1, 2))
+        m.add_path(f"g_{maternal}", f"g_{tag}", sp.Rational(1, 2))
+        m.add_path(f"g_{paternal}", f"g_{tag}", sp.Rational(1, 2))
         m.add_path(f"s_{tag}", f"g_{tag}", 1)
         m.add_variance(f"e_{tag}", V_E)
 
     founder("0m")
-    partner_of("0f", "0m")
-    focal, partner = "0m", "0f"
+    partner_of("0p", "0m")
+    focal, partner = "0m", "0p"
     for t in range(1, generations + 1):
         child(f"{t}c", focal, partner)
         partner_of(f"{t}p", f"{t}c")

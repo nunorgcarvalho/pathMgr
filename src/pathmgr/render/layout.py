@@ -173,7 +173,7 @@ def pedigree_layout(
     The hand-off point for a pedigree builder: it knows which generation each individual is in,
     which is the only thing a pedigree diagram really needs to look right.
 
-    >>> layout = pedigree_layout({"y_m": 0, "y_f": 0, "y_o": 1}, {"y_m": 0, "y_f": 1, "y_o": 0.5})
+    >>> layout = pedigree_layout({"y_m": 0, "y_p": 0, "y_o": 1}, {"y_m": 0, "y_p": 1, "y_o": 0.5})
     >>> layout["y_o"]
     (1.1, -1.6)
     """

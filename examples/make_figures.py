@@ -30,28 +30,28 @@ def mated_pair() -> tuple[pm.Model, Layout]:
     """One mated pair assorting on the phenotype, with a co-path."""
     model = pm.from_text(
         """
-        latent: g_m, e_m, g_f, e_f
+        latent: g_m, e_m, g_p, e_p
         positive: V_A, V_E
         label: g_m = $g_m$
         label: e_m = $e_m$
         label: y_m = $y_m$
-        label: g_f = $g_f$
-        label: e_f = $e_f$
-        label: y_f = $y_f$
+        label: g_p = $g_p$
+        label: e_p = $e_p$
+        label: y_p = $y_p$
         y_m ~ g_m + e_m
-        y_f ~ g_f + e_f
+        y_p ~ g_p + e_p
         g_m ~~ V_A*g_m
         e_m ~~ V_E*e_m
-        g_f ~~ V_A*g_f
-        e_f ~~ V_E*e_f
-        y_m -- (rho_y/(V_A + V_E))*y_f
+        g_p ~~ V_A*g_p
+        e_p ~~ V_E*e_p
+        y_m -- (rho_y/(V_A + V_E))*y_p
         """,
         name="mated pair",
     )
     layout = Layout(
         {
             "g_m": (0.0, 0.0), "e_m": (1.7, 0.0), "y_m": (0.85, -1.9),
-            "g_f": (5.1, 0.0), "e_f": (6.8, 0.0), "y_f": (5.95, -1.9),
+            "g_p": (5.1, 0.0), "e_p": (6.8, 0.0), "y_p": (5.95, -1.9),
         }
     )
     return model, layout
@@ -65,29 +65,29 @@ def allele_level_pair() -> tuple[pm.Model, Layout]:
     """
     model = pm.from_text(
         """
-        latent: z_mat_m, z_pat_m, g_m, e_m, z_mat_f, z_pat_f, g_f, e_f
+        latent: z_mat_m, z_pat_m, g_m, e_m, z_mat_p, z_pat_p, g_p, e_p
         positive: beta, V_E
         label: z_mat_m = $z^{(m)}_{m}$
         label: z_pat_m = $z^{(p)}_{m}$
-        label: z_mat_f = $z^{(m)}_{f}$
-        label: z_pat_f = $z^{(p)}_{f}$
+        label: z_mat_p = $z^{(m)}_{p}$
+        label: z_pat_p = $z^{(p)}_{p}$
         label: g_m = $g_m$
         label: e_m = $e_m$
         label: y_m = $y_m$
-        label: g_f = $g_f$
-        label: e_f = $e_f$
-        label: y_f = $y_f$
+        label: g_p = $g_p$
+        label: e_p = $e_p$
+        label: y_p = $y_p$
         g_m ~ beta*z_mat_m + beta*z_pat_m
-        g_f ~ beta*z_mat_f + beta*z_pat_f
+        g_p ~ beta*z_mat_p + beta*z_pat_p
         y_m ~ g_m + e_m
-        y_f ~ g_f + e_f
+        y_p ~ g_p + e_p
         z_mat_m ~~ 1/2*z_mat_m
         z_pat_m ~~ 1/2*z_pat_m
-        z_mat_f ~~ 1/2*z_mat_f
-        z_pat_f ~~ 1/2*z_pat_f
+        z_mat_p ~~ 1/2*z_mat_p
+        z_pat_p ~~ 1/2*z_pat_p
         e_m ~~ V_E*e_m
-        e_f ~~ V_E*e_f
-        y_m -- (rho_y/(beta**2 + V_E))*y_f
+        e_p ~~ V_E*e_p
+        y_m -- (rho_y/(beta**2 + V_E))*y_p
         """,
         name="allele level",
     )
@@ -95,8 +95,8 @@ def allele_level_pair() -> tuple[pm.Model, Layout]:
         {
             "z_mat_m": (0.0, 1.9), "z_pat_m": (1.8, 1.9),
             "g_m": (0.9, 0.0), "e_m": (2.7, 0.0), "y_m": (1.4, -2.0),
-            "z_mat_f": (5.8, 1.9), "z_pat_f": (7.6, 1.9),
-            "g_f": (6.7, 0.0), "e_f": (4.9, 0.0), "y_f": (6.2, -2.0),
+            "z_mat_p": (5.8, 1.9), "z_pat_p": (7.6, 1.9),
+            "g_p": (6.7, 0.0), "e_p": (4.9, 0.0), "y_p": (6.2, -2.0),
         }
     )
     return model, layout
@@ -108,7 +108,7 @@ def pair_with_two_children() -> tuple[pm.Model, Layout]:
     layout = Layout(
         {
             "g_m": (0.0, 0.0), "e_m": (1.6, 0.0), "y_m": (0.8, -1.9),
-            "g_f": (5.6, 0.0), "e_f": (7.2, 0.0), "y_f": (6.4, -1.9),
+            "g_p": (5.6, 0.0), "e_p": (7.2, 0.0), "y_p": (6.4, -1.9),
             "s_o1": (0.4, -3.7), "g_o1": (2.2, -3.7), "e_o1": (4.0, -3.7),
             "y_o1": (2.2, -5.5),
             "s_o2": (7.6, -3.7), "g_o2": (5.8, -3.7), "e_o2": (9.2, -3.7),
@@ -131,13 +131,13 @@ def allele_transmission_motif() -> tuple[pm.Model, Layout]:
     m = motif.model
     layout = Layout(
         {
-            # generation 0: mother left, father right
+            # generation 0: maternal left, paternal right
             motif.z("m", "mat", 0): (0.0, 3.2), motif.z("m", "pat", 0): (2.0, 3.2),
             motif.x("m", 0): (1.0, 1.7), motif.g("m"): (1.0, 0.3), motif.e("m"): (-1.0, 0.3),
             motif.y("m"): (1.0, -1.1),
-            motif.z("f", "mat", 0): (7.0, 3.2), motif.z("f", "pat", 0): (9.0, 3.2),
-            motif.x("f", 0): (8.0, 1.7), motif.g("f"): (8.0, 0.3), motif.e("f"): (10.0, 0.3),
-            motif.y("f"): (8.0, -1.1),
+            motif.z("p", "mat", 0): (7.0, 3.2), motif.z("p", "pat", 0): (9.0, 3.2),
+            motif.x("p", 0): (8.0, 1.7), motif.g("p"): (8.0, 0.3), motif.e("p"): (10.0, 0.3),
+            motif.y("p"): (8.0, -1.1),
             # generation 1
             motif.z("o", "mat", 0): (3.4, -3.0), motif.z("o", "pat", 0): (5.6, -3.0),
             motif.s("o", "mat", 0): (1.4, -3.0), motif.s("o", "pat", 0): (7.6, -3.0),
@@ -179,11 +179,11 @@ def main(out: Path) -> None:
 
     # -- the figure this project exists to make ---------------------------------------
     tracer = pm.WrightTracer(allele_model)
-    decomposition = tracer.trace("z_mat_m", "z_mat_f")
+    decomposition = tracer.trace("z_mat_m", "z_mat_p")
     chain = decomposition.chains[0]
     # `tidy` hides the CONTEXT variances; the chain's own z <-> z loops are drawn regardless,
     # because they carry the 1/2 * 1/2 that produces the /4 in the result
-    name = r"\operatorname{Cov}\left[z^{(m)}_{m}, z^{(m)}_{f}\right]" if len(decomposition) == 1 else None
+    name = r"\operatorname{Cov}\left[z^{(m)}_{m}, z^{(m)}_{p}\right]" if len(decomposition) == 1 else None
     emit(
         "allele_chain_highlighted", allele_model, allele_layout, out, tidy,
         highlight=chain, caption_name=name,
@@ -199,7 +199,7 @@ def main(out: Path) -> None:
     print(f"    {chain.path_string()}")
     print(f"    = {sp.factor(decomposition.total)}")
     print()
-    print("  which is Cov[z_mat_m, z_mat_f] = beta^2 rho_y / (4 V_P) -- a co-path reaching")
+    print("  which is Cov[z_mat_m, z_mat_p] = beta^2 rho_y / (4 V_P) -- a co-path reaching")
     print("  the alleles, where a bidirected edge would give exactly 0.")
 
 

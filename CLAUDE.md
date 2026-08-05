@@ -89,6 +89,14 @@ docs/
   scale_pedigree.md           measured depth limit, symbolic vs numeric
 ```
 
+**Naming — the two parents.** Suffix `_m` / `_p` = **maternal / paternal**, never `_f`. Two
+distinct axes are in play and they must stay visually apart: *which person* is a **subscript**
+(`g_m`, `g_p`) and *which gamete a variant came from* is a **superscript** (`z^{(m)}_p` is the
+maternally-inherited allele of the paternal parent). Picking `_p` over `_f` makes the parent label
+and the origin label correspond — the maternal parent transmits the child's `z_mat` — which `_f`
+did on one side only. Sex plays no part in any model here; these are transmission channels.
+Beware: `V_f` and a latent factor named `f` appear in generic-core examples and are unrelated.
+
 **Naming.** `docs/` files are named for *what is inside them*, and two kinds of document are kept
 apart: `scale_*.md` are measured limits (`scale_ram.md` is generated — do not hand-edit it), while
 a design note recording how a construction works gets its own name. These were all called
@@ -149,13 +157,13 @@ assume: V_A + V_E = 1                  # side relation, not an edge
 
 y_i ~ g_i + e_i                        # directed; coefficient 1 implied
 y   ~ b1*x1 + b2*x2
-g_o ~ 1/2*g_m + 1/2*g_f + s_o          # exact rationals, not floats
+g_o ~ 1/2*g_m + 1/2*g_p + s_o          # exact rationals, not floats
 g_c ~ ((1 + rho_g)/2)*g_p              # parenthesise a compound coefficient
 
 x1  ~~ V_1*x1                          # a variance
 g_i ~~ (V_A*pi_ij)*g_j                 # a covariance, expression value
 
-y_m -- mu*y_f                          # a co-path (matching); see the co-path section
+y_m -- mu*y_p                          # a co-path (matching); see the co-path section
 S_m -- mu2*Sx_p [couple0]              # [name] names the mating process
 ```
 
@@ -244,20 +252,20 @@ here). A co-path denotes covariance attributable to **matching**, inducing covar
 causing variance*.
 
 ```python
-m.add_copath("y_m", "y_f", "mu")                      # process defaults to the pair
-m.add_copath("S_m", "Sx_f", "mu_prime", process="couple0")   # cross-trait: same process
+m.add_copath("y_m", "y_p", "mu")                      # process defaults to the pair
+m.add_copath("S_m", "Sx_p", "mu_prime", process="couple0")   # cross-trait: same process
 ```
 ```
-y_m -- mu*y_f                    # text grammar: an arrowless line
+y_m -- mu*y_p                    # text grammar: an arrowless line
 S_m -- mu2*Sx_p [couple0]        # [name] names the mating process
 ```
 
 **Why it is not a bidirected edge, and cannot be emulated by one.** Matching induces correlation
 among *all the causes* of the matched variables, so the association propagates **backward** up
-the graph. An `S` entry is a disturbance covariance and does not. So `S[y_m, y_f] = c` gets
-`Cov[y_m, y_f]` right and `Cov[g_m, g_f] = 0`. The decisive check, in `tests/test_copath.py`:
+the graph. An `S` entry is a disturbance covariance and does not. So `S[y_m, y_p] = c` gets
+`Cov[y_m, y_p]` right and `Cov[g_m, g_p] = 0`. The decisive check, in `tests/test_copath.py`:
 split each parent's `g` into allele nodes and confirm
-`Cov[z_mat_m, z_mat_f] = beta^2 rho_y / (4 V_P)` **without it being specified**. A bidirected
+`Cov[z_mat_m, z_mat_p] = beta^2 rho_y / (4 V_P)` **without it being specified**. A bidirected
 edge gives 0 there.
 
 **The coefficient is not the correlation.** Sunde Eq. (1) is `Cov[a,b] = mu Var[a] Var[b]`, so a
@@ -398,7 +406,7 @@ Alleles are indexed by **parental origin, not by transmission**. "Transmitted" i
 to a chosen descendant, so it is not a property of an individual and cannot be carried up a
 pedigree; maternal/paternal origin is intrinsic, which makes the motif reusable at every
 parent–child pair. Transmission coefficients are **1/2, not sqrt(1/2)** — they are regression
-coefficients, and `E[child's allele | mother] = (A + B)/2`.
+coefficients, and `E[child's allele | maternal] = (A + B)/2`.
 
 **The only cross-couple statement in the model is one co-path between the founders' phenotypes.**
 Every allele covariance, the offspring's linkage disequilibrium, and the departure from
@@ -553,7 +561,7 @@ cannot covary with anything — so asserting that it does yields a `Sigma` that 
 positive semi-definite**, with an implied correlation above 1 and no other complaint.
 `Model.validate()` reports this as an error, and the warning case (endogenous but with a
 disturbance variance) too. This bit while writing the RAM profile: encoding assortative mating
-as `g_mother <-> g_father` is right for a founding couple and wrong the moment a mate is
+as `g_m <-> g_p` is right for a founding couple and wrong the moment a mate is
 someone's child. The fix is to make assortment a **directed path from the partner's
 phenotype** — the full account, including the co-path encoding that supersedes it, is
 [docs/assortment_representation_trap.md](docs/assortment_representation_trap.md), which

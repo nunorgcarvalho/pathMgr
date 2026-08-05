@@ -14,12 +14,12 @@
   \node[pmObserved] (x_m_0) at (1.000,1.700) {$x_{m,0}$};
   \node[pmLatent] (z_mat_m_0) at (0.000,3.200) {$z^{(m)}_{m,0}$};
   \node[pmLatent] (z_pat_m_0) at (2.000,3.200) {$z^{(p)}_{m,0}$};
-  \node[pmLatent] (g_f) at (8.000,0.300) {$g_{f}$};
-  \node[pmLatent] (e_f) at (10.000,0.300) {$e_{f}$};
-  \node[pmObserved] (y_f) at (8.000,-1.100) {$y_{f}$};
-  \node[pmObserved] (x_f_0) at (8.000,1.700) {$x_{f,0}$};
-  \node[pmLatent] (z_mat_f_0) at (7.000,3.200) {$z^{(m)}_{f,0}$};
-  \node[pmLatent] (z_pat_f_0) at (9.000,3.200) {$z^{(p)}_{f,0}$};
+  \node[pmLatent] (g_p) at (8.000,0.300) {$g_{p}$};
+  \node[pmLatent] (e_p) at (10.000,0.300) {$e_{p}$};
+  \node[pmObserved] (y_p) at (8.000,-1.100) {$y_{p}$};
+  \node[pmObserved] (x_p_0) at (8.000,1.700) {$x_{p,0}$};
+  \node[pmLatent] (z_mat_p_0) at (7.000,3.200) {$z^{(m)}_{p,0}$};
+  \node[pmLatent] (z_pat_p_0) at (9.000,3.200) {$z^{(p)}_{p,0}$};
   \node[pmLatent] (g_o) at (4.500,-5.900) {$g_{o}$};
   \node[pmLatent] (e_o) at (6.900,-5.900) {$e_{o}$};
   \node[pmObserved] (y_o) at (4.500,-7.300) {$y_{o}$};
@@ -33,11 +33,11 @@
   \draw[pmDirected, draw=black] (x_m_0) -- node[pmLabel] {$\beta_{0}$} (g_m);
   \draw[pmDirected, draw=black] (z_mat_m_0) -- (x_m_0);
   \draw[pmDirected, draw=black] (z_pat_m_0) -- (x_m_0);
-  \draw[pmDirected, draw=black] (g_f) -- (y_f);
-  \draw[pmDirected, draw=black] (e_f) -- (y_f);
-  \draw[pmDirected, draw=black] (x_f_0) -- node[pmLabel] {$\beta_{0}$} (g_f);
-  \draw[pmDirected, draw=black] (z_mat_f_0) -- (x_f_0);
-  \draw[pmDirected, draw=black] (z_pat_f_0) -- (x_f_0);
+  \draw[pmDirected, draw=black] (g_p) -- (y_p);
+  \draw[pmDirected, draw=black] (e_p) -- (y_p);
+  \draw[pmDirected, draw=black] (x_p_0) -- node[pmLabel] {$\beta_{0}$} (g_p);
+  \draw[pmDirected, draw=black] (z_mat_p_0) -- (x_p_0);
+  \draw[pmDirected, draw=black] (z_pat_p_0) -- (x_p_0);
   \draw[pmDirected, draw=black] (g_o) -- (y_o);
   \draw[pmDirected, draw=black] (e_o) -- (y_o);
   \draw[pmDirected, draw=black] (x_o_0) -- node[pmLabel] {$\beta_{0}$} (g_o);
@@ -47,7 +47,7 @@
   \draw[pmDirected, draw=black] (z_mat_m_0) to[bend left=45] node[pmLabel, xshift=0.193cm, yshift=0.106cm] {$\frac{1}{2}$} (z_mat_o_0);
   \draw[pmDirected, draw=black] (z_pat_m_0) -- node[pmLabel] {$\frac{1}{2}$} (z_mat_o_0);
   \draw[pmDirected, draw=black] (s_pat_o_0) -- (z_pat_o_0);
-  \draw[pmDirected, draw=black] (z_mat_f_0) -- node[pmLabel] {$\frac{1}{2}$} (z_pat_o_0);
-  \draw[pmDirected, draw=black] (z_pat_f_0) to[bend right=45] node[pmLabel, xshift=-0.193cm, yshift=0.106cm] {$\frac{1}{2}$} (z_pat_o_0);
-  \draw[pmCopath, draw=pmCB03A2E] (y_f) -- node[pmLabel] {$\frac{\rho_{y}}{V_{E} + \beta_{0}^{2}}$} (y_m);
+  \draw[pmDirected, draw=black] (z_mat_p_0) -- node[pmLabel] {$\frac{1}{2}$} (z_pat_o_0);
+  \draw[pmDirected, draw=black] (z_pat_p_0) to[bend right=45] node[pmLabel, xshift=-0.193cm, yshift=0.106cm] {$\frac{1}{2}$} (z_pat_o_0);
+  \draw[pmCopath, draw=pmCB03A2E] (y_m) -- node[pmLabel] {$\frac{\rho_{y}}{V_{E} + \beta_{0}^{2}}$} (y_p);
 \end{tikzpicture}

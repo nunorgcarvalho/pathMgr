@@ -66,14 +66,14 @@ def test_pedigree_shape():
 def test_relationships_are_derived_from_structure():
     """Degree alone is not sufficient, so the distinctions come from structural tests."""
     pedigree = am_pedigree(2, children_per_couple=2, breeding_children=1)
-    mother, father = pedigree.couples[0].mother, pedigree.couples[0].father
+    maternal, paternal = pedigree.couples[0].maternal, pedigree.couples[0].paternal
     sib_a, sib_b = sorted(pedigree.children_of(pedigree.couples[0]))
     grandchild = sorted(pedigree.children_of(pedigree.couples[1]))[0]
 
-    assert pedigree.relationship(mother, father) == "partners"
-    assert pedigree.relationship(mother, sib_a) == "lineal"
+    assert pedigree.relationship(maternal, paternal) == "partners"
+    assert pedigree.relationship(maternal, sib_a) == "lineal"
     assert pedigree.relationship(sib_a, sib_b) == "full siblings"
-    assert pedigree.relationship(mother, grandchild) == "lineal"       # degree 2
+    assert pedigree.relationship(maternal, grandchild) == "lineal"       # degree 2
     assert pedigree.relationship(sib_b, grandchild) == "collateral"    # ALSO degree 2, different
     assert pedigree.relationship(sib_a, sib_a) == "self"
 
@@ -85,8 +85,8 @@ def test_half_siblings_are_recognised_as_a_third_case():
     assert pedigree.relationship(full[0], full[1]) == "full siblings"
     assert pedigree.relationship(full[0], half) == "half siblings"
     # the two outer parents share a partner but no ancestor at all
-    outer_a = pedigree.couples[0].father
-    outer_b = pedigree.couples[1].father
+    outer_a = pedigree.couples[0].paternal
+    outer_b = pedigree.couples[1].paternal
     assert pedigree.relationship(outer_a, outer_b) == "co-parents-in-law"
     assert not (pedigree.ancestors_of(outer_a) & pedigree.ancestors_of(outer_b))
 
@@ -125,7 +125,7 @@ def test_the_copath_coefficient_is_generation_indexed():
         assert sp.simplify(mu - unrolled.rho_y / unrolled.V_P[t]) == 0
     for couple in pedigree.couples:
         value = unrolled.model.copath_value(
-            f"y_{couple.mother}", f"y_{couple.father}", process=couple.key
+            f"y_{couple.maternal}", f"y_{couple.paternal}", process=couple.key
         )
         assert sp.simplify(value - unrolled.mu[couple.generation]) == 0
 
@@ -174,33 +174,33 @@ def one_generation():
 
 def test_partners(one_generation):
     pedigree, unrolled, engine = one_generation
-    mother, father = pedigree.couples[0].mother, pedigree.couples[0].father
+    maternal, paternal = pedigree.couples[0].maternal, pedigree.couples[0].paternal
     assert sp.simplify(
-        engine.cov(f"y_{mother}", f"y_{father}") - unrolled.rho_y * unrolled.V_P[0]
+        engine.cov(f"y_{maternal}", f"y_{paternal}") - unrolled.rho_y * unrolled.V_P[0]
     ) == 0
     # rho_g is DERIVED, never asserted
     assert sp.simplify(
-        engine.cov(f"g_{mother}", f"g_{father}") - unrolled.rho_g[0] * unrolled.V_A[0]
+        engine.cov(f"g_{maternal}", f"g_{paternal}") - unrolled.rho_g[0] * unrolled.V_A[0]
     ) == 0
 
 
 def test_parent_offspring_and_full_siblings(one_generation):
     pedigree, unrolled, engine = one_generation
-    mother = pedigree.couples[0].mother
+    maternal = pedigree.couples[0].maternal
     sib_a, sib_b = sorted(pedigree.children_of(pedigree.couples[0]))
     V_A, rho_g, rho_y = unrolled.V_A[0], unrolled.rho_g[0], unrolled.rho_y
 
     assert sp.simplify(
-        engine.cov(f"g_{mother}", f"g_{sib_a}") - V_A * (1 + rho_g) / 2
+        engine.cov(f"g_{maternal}", f"g_{sib_a}") - V_A * (1 + rho_g) / 2
     ) == 0
     assert sp.simplify(engine.cov(f"g_{sib_a}", f"g_{sib_b}") - V_A * (1 + rho_g) / 2) == 0
     assert sp.simplify(
-        engine.cov(f"y_{mother}", f"y_{sib_a}") - V_A * (1 + rho_y) / 2
+        engine.cov(f"y_{maternal}", f"y_{sib_a}") - V_A * (1 + rho_y) / 2
     ) == 0
 
     # parent-offspring exceeds full-sib, and only because of the environmental cross term
     excess = sp.simplify(
-        engine.cov(f"y_{mother}", f"y_{sib_a}") - engine.cov(f"y_{sib_a}", f"y_{sib_b}")
+        engine.cov(f"y_{maternal}", f"y_{sib_a}") - engine.cov(f"y_{sib_a}", f"y_{sib_b}")
     )
     assert sp.simplify(excess - V_A * (rho_y - rho_g) / 2) == 0
 
@@ -218,11 +218,11 @@ def test_the_recursion_is_derived_not_assumed(one_generation):
 def test_generation_indexing_is_pinned_at_low_t(one_generation):
     """THE indexing test. At low t the error is largest; near equilibrium it would vanish."""
     pedigree, unrolled, engine = one_generation
-    mother = pedigree.couples[0].mother
+    maternal = pedigree.couples[0].maternal
     child = sorted(pedigree.children_of(pedigree.couples[0]))[0]
     rho_y = unrolled.rho_y
 
-    got = engine.cov(f"y_{mother}", f"y_{child}")
+    got = engine.cov(f"y_{maternal}", f"y_{child}")
     parents_index = unrolled.V_A[0] * (1 + rho_y) / 2       # correct
     offspring_index = unrolled.V_A[1] * (1 + rho_y) / 2      # the trap
 
@@ -238,7 +238,7 @@ def test_lineal_over_two_generations_is_a_chained_product_not_a_power():
     pedigree = am_pedigree(2, children_per_couple=2, breeding_children=1)
     unrolled = g_level_model(pedigree)
     engine = pm.RAMEngine(unrolled.model)
-    grandparent = pedigree.couples[0].mother
+    grandparent = pedigree.couples[0].maternal
     grandchild = sorted(pedigree.children_of(pedigree.couples[1]))[0]
     assert pedigree.relationship(grandparent, grandchild) == "lineal"
 
@@ -275,7 +275,7 @@ def test_individuals_with_no_common_ancestor_can_be_correlated():
     pedigree = am_pedigree(1, children_per_couple=2, half_sib_at=0)
     unrolled = g_level_model(pedigree)
     engine = pm.RAMEngine(unrolled.model)
-    outer_a, outer_b = pedigree.couples[0].father, pedigree.couples[1].father
+    outer_a, outer_b = pedigree.couples[0].paternal, pedigree.couples[1].paternal
     assert not (pedigree.ancestors_of(outer_a) & pedigree.ancestors_of(outer_b))
 
     got = engine.cov(f"g_{outer_a}", f"g_{outer_b}")
@@ -294,7 +294,7 @@ def test_rho_y_zero_reduces_to_the_random_mating_results():
     # under random mating every generation has the base additive variance
     flat = {v: unrolled.V_A0 for v in unrolled.V_A}
 
-    mother = pedigree.couples[0].mother
+    maternal = pedigree.couples[0].maternal
     sib_a, sib_b = sorted(pedigree.children_of(pedigree.couples[0]))
     grandchild = sorted(pedigree.children_of(pedigree.couples[1]))[0]
     V_A0 = unrolled.V_A0
@@ -302,14 +302,14 @@ def test_rho_y_zero_reduces_to_the_random_mating_results():
     def value(expression):
         return sp.simplify(expression.subs(zero).subs(flat))
 
-    assert value(engine.cov(f"g_{mother}", f"g_{pedigree.couples[0].father}")) == 0  # partners
+    assert value(engine.cov(f"g_{maternal}", f"g_{pedigree.couples[0].paternal}")) == 0  # partners
     assert value(engine.var(f"g_{sib_a}")) == V_A0                                    # no inflation
-    assert value(engine.cov(f"g_{mother}", f"g_{sib_a}") - V_A0 / 2) == 0             # PO
+    assert value(engine.cov(f"g_{maternal}", f"g_{sib_a}") - V_A0 / 2) == 0             # PO
     assert value(engine.cov(f"g_{sib_a}", f"g_{sib_b}") - V_A0 / 2) == 0              # FS
-    assert value(engine.cov(f"g_{mother}", f"g_{grandchild}") - V_A0 / 4) == 0        # 2^-d
+    assert value(engine.cov(f"g_{maternal}", f"g_{grandchild}") - V_A0 / 4) == 0        # 2^-d
     # PO and FS are EQUAL under random mating -- the asymmetry is assortment's doing
     assert value(
-        engine.cov(f"y_{mother}", f"y_{sib_a}") - engine.cov(f"y_{sib_a}", f"y_{sib_b}")
+        engine.cov(f"y_{maternal}", f"y_{sib_a}") - engine.cov(f"y_{sib_a}", f"y_{sib_b}")
     ) == 0
 
 
@@ -318,12 +318,12 @@ def test_both_engines_agree_on_an_unrolled_pedigree():
     unrolled = g_level_model(pedigree)
     engine = pm.RAMEngine(unrolled.model)
     tracer = pm.WrightTracer(unrolled.model, max_chains=500_000)
-    mother = pedigree.couples[0].mother
+    maternal = pedigree.couples[0].maternal
     grandchild = sorted(pedigree.children_of(pedigree.couples[1]))[0]
     for x, y in [
-        (f"g_{mother}", f"g_{grandchild}"),
-        (f"y_{mother}", f"y_{grandchild}"),
-        (f"g_{mother}", f"g_{pedigree.couples[0].father}"),
+        (f"g_{maternal}", f"g_{grandchild}"),
+        (f"y_{maternal}", f"y_{grandchild}"),
+        (f"g_{maternal}", f"g_{pedigree.couples[0].paternal}"),
     ]:
         assert sp.simplify(tracer.cov(x, y) - engine.cov(x, y)) == 0, f"Cov[{x}, {y}]"
 
@@ -400,8 +400,8 @@ def test_layout_places_partners_adjacent():
     pedigree = am_pedigree(2, children_per_couple=2, breeding_children=1)
     for couple in pedigree.couples:
         order = pedigree.generation_order(couple.generation)
-        gap = abs(order.index(couple.mother) - order.index(couple.father))
-        assert gap == 1, f"{couple.mother} and {couple.father} are {gap} apart"
+        gap = abs(order.index(couple.maternal) - order.index(couple.paternal))
+        assert gap == 1, f"{couple.maternal} and {couple.paternal} are {gap} apart"
     # and it stays deterministic
     assert pedigree.generation_order(1) == am_pedigree(
         2, children_per_couple=2, breeding_children=1

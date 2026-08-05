@@ -8,7 +8,7 @@ job is to reach the *causes* of the matched phenotypes and every allele covarian
 
 Alleles are indexed by PARENTAL ORIGIN, not by transmission
 ------------------------------------------------------------
-``z_mat[i, k]`` is the allele individual ``i`` inherited from their mother at variant ``k``;
+``z_mat[i, k]`` is the allele individual ``i`` inherited from their maternal at variant ``k``;
 ``z_pat[i, k]`` the paternal one. This is the design decision that took the longest to settle, and
 the reason for it is that "transmitted" is defined relative to a *chosen descendant*, so it is not
 a property of an individual and cannot be carried up a pedigree. Maternal/paternal origin is
@@ -20,8 +20,8 @@ differently and they agree on all second moments. The transmitted/non-transmitte
 the right tool for *within-family* questions -- direct vs indirect effects, non-transmitted-allele
 designs -- which are out of scope here.)
 
-Both of the mother's alleles feed the child's maternal allele with coefficient **1/2**, not
-``sqrt(1/2)``: these are regression coefficients and ``E[child's allele | mother] = (A + B)/2``.
+Both of the maternal's alleles feed the child's maternal allele with coefficient **1/2**, not
+``sqrt(1/2)``: these are regression coefficients and ``E[child's allele | maternal] = (A + B)/2``.
 Because every allele node carries the same variance the standardized coefficient is also 1/2, so
 there is no ambiguity.
 
@@ -84,7 +84,7 @@ class AlleleMotif:
     betas: tuple[sp.Expr, ...]
     rho_y: sp.Expr
     V_E: sp.Expr
-    founders: tuple[str, str] = ("m", "f")
+    founders: tuple[str, str] = ("m", "p")
     children: tuple[str, ...] = ("o",)
 
     @property
@@ -171,7 +171,7 @@ def allele_motif(
     >>> motif = allele_motif(n_variants=1)
     >>> len(motif.model.copaths)
     1
-    >>> motif.model.copath_value("y_m", "y_f") == motif.mu
+    >>> motif.model.copath_value("y_m", "y_p") == motif.mu
     True
     """
     if n_variants < 1:
@@ -193,7 +193,7 @@ def allele_motif(
                 f"got {len(effects)} effects for {n_variants} variants; they must match"
             )
 
-    founders = ("m", "f")
+    founders = ("m", "p")
     children = tuple(f"o{i + 1}" for i in range(n_children)) if n_children > 1 else ("o",)
     motif = AlleleMotif(
         model=model,
@@ -235,13 +235,13 @@ def allele_motif(
                 # population and the two alleles are uncorrelated (Hardy-Weinberg)
                 model.add_variance(motif.z(who, origin, k), half)
 
-    mother, father = founders
+    maternal, paternal = founders
     for child in children:
         add_individual(child)
         for k in range(n_variants):
-            # the child's maternal allele comes from BOTH of the mother's alleles at 1/2 each,
-            # plus genuine meiotic randomness; likewise the paternal one from the father
-            for origin, parent in (("mat", mother), ("pat", father)):
+            # the child's maternal allele comes from BOTH of the maternal's alleles at 1/2 each,
+            # plus genuine meiotic randomness; likewise the paternal one from the paternal
+            for origin, parent in (("mat", maternal), ("pat", paternal)):
                 model.add_var(
                     motif.s(child, origin, k),
                     latent=True,
@@ -257,7 +257,7 @@ def allele_motif(
                     )
 
     # THE ONLY cross-couple link. Everything else about the assortment is derived.
-    model.add_copath(motif.y(mother), motif.y(father), motif.mu, process="founding couple")
+    model.add_copath(motif.y(maternal), motif.y(paternal), motif.mu, process="founding couple")
 
     model.assume("V_A", motif.V_A)
     model.assume("V_P", motif.V_P)

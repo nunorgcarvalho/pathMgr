@@ -78,10 +78,10 @@ def test_to_text_round_trips(text):
 def test_round_trip_preserves_rationals_and_expressions():
     m = pm.from_text(
         """
-        latent: g_m, g_f, g_o, s_o
-        g_o ~ 1/2*g_m + 1/2*g_f + s_o
+        latent: g_m, g_p, g_o, s_o
+        g_o ~ 1/2*g_m + 1/2*g_p + s_o
         g_c ~ ((1 + rho_g)/2)*g_o
-        g_m ~~ (rho_g*V_A_eq)*g_f
+        g_m ~~ (rho_g*V_A_eq)*g_p
         """
     )
     again = pm.from_text(m.to_text())

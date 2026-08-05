@@ -69,8 +69,8 @@ def test_siblings_sharing_a_genetic_factor():
     V_A = m.sym("V_A")
 
     assert paths(d) == {
-        "y_1 <- g_1 <- g_m <-> g_m -> g_2 -> y_2",  # up through the mother and back down
-        "y_1 <- g_1 <- g_f <-> g_f -> g_2 -> y_2",  # and through the father
+        "y_1 <- g_1 <- g_m <-> g_m -> g_2 -> y_2",  # up through the maternal and back down
+        "y_1 <- g_1 <- g_p <-> g_p -> g_2 -> y_2",  # and through the paternal
     }
     # each shared parent contributes (1/2)(V_A)(1/2)
     for chain in d:

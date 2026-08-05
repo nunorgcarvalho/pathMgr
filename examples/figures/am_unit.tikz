@@ -10,8 +10,8 @@
 ]
   \node[pmLatent] (g_m) at (0.000,0.000) {$g_{m}$};
   \node[pmLatent] (e_m) at (1.600,0.000) {$e_{m}$};
-  \node[pmLatent] (g_f) at (5.600,0.000) {$g_{f}$};
-  \node[pmLatent] (e_f) at (7.200,0.000) {$e_{f}$};
+  \node[pmLatent] (g_p) at (5.600,0.000) {$g_{p}$};
+  \node[pmLatent] (e_p) at (7.200,0.000) {$e_{p}$};
   \node[pmLatent] (g_o1) at (2.200,-3.700) {$g_{o1}$};
   \node[pmLatent] (e_o1) at (4.000,-3.700) {$e_{o1}$};
   \node[pmLatent] (s_o1) at (0.400,-3.700) {$s_{o1}$};
@@ -19,22 +19,22 @@
   \node[pmLatent] (e_o2) at (9.200,-3.700) {$e_{o2}$};
   \node[pmLatent] (s_o2) at (7.600,-3.700) {$s_{o2}$};
   \node[pmObserved] (y_m) at (0.800,-1.900) {$y_{m}$};
-  \node[pmObserved] (y_f) at (6.400,-1.900) {$y_{f}$};
+  \node[pmObserved] (y_p) at (6.400,-1.900) {$y_{p}$};
   \node[pmObserved] (y_o1) at (2.200,-5.500) {$y_{o1}$};
   \node[pmObserved] (y_o2) at (5.800,-5.500) {$y_{o2}$};
   \draw[pmDirected, draw=black] (g_m) -- (y_m);
   \draw[pmDirected, draw=black] (e_m) -- (y_m);
-  \draw[pmDirected, draw=black] (g_f) -- (y_f);
-  \draw[pmDirected, draw=black] (e_f) -- (y_f);
+  \draw[pmDirected, draw=black] (g_p) -- (y_p);
+  \draw[pmDirected, draw=black] (e_p) -- (y_p);
   \draw[pmDirected, draw=black] (g_o1) -- (y_o1);
   \draw[pmDirected, draw=black] (e_o1) -- (y_o1);
   \draw[pmDirected, draw=black] (g_o2) -- (y_o2);
   \draw[pmDirected, draw=black] (e_o2) -- (y_o2);
   \draw[pmDirected, draw=black] (g_m) to[bend left=18] node[pmLabel, xshift=0.344cm, yshift=0.204cm] {$\frac{1}{2}$} (g_o1);
-  \draw[pmDirected, draw=black] (g_f) -- node[pmLabel] {$\frac{1}{2}$} (g_o1);
+  \draw[pmDirected, draw=black] (g_p) -- node[pmLabel] {$\frac{1}{2}$} (g_o1);
   \draw[pmDirected, draw=black] (s_o1) -- (g_o1);
   \draw[pmDirected, draw=black] (g_m) -- node[pmLabel] {$\frac{1}{2}$} (g_o2);
-  \draw[pmDirected, draw=black] (g_f) -- node[pmLabel] {$\frac{1}{2}$} (g_o2);
+  \draw[pmDirected, draw=black] (g_p) -- node[pmLabel] {$\frac{1}{2}$} (g_o2);
   \draw[pmDirected, draw=black] (s_o2) -- (g_o2);
-  \draw[pmCopath, draw=pmCB03A2E] (y_f) -- node[pmLabel, pos=0.380, xshift=-0.000cm, yshift=-0.400cm] {$\frac{\rho_{y}}{V_{A eq} + V_{E}}$} (y_m);
+  \draw[pmCopath, draw=pmCB03A2E] (y_m) -- node[pmLabel, pos=0.620, xshift=0.000cm, yshift=-0.400cm] {$\frac{\rho_{y}}{V_{A eq} + V_{E}}$} (y_p);
 \end{tikzpicture}

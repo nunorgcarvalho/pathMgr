@@ -68,7 +68,7 @@ def am_transmission_unit() -> pm.Model:
     The parts worth staring at:
       - transmission coefficients are exact rationals, not floats;
       - the assortment edge is an *expression*, rho_g * V_A_eq;
-      - Cov[e_m, g_f] = rho_g * V_E is an edge between one individual's environment and
+      - Cov[e_m, g_p] = rho_g * V_E is an edge between one individual's environment and
         the other's genes -- the term that makes lineal relatives differ from collateral
         ones, and the reason bidirected edges must be allowed between arbitrary latents;
       - rho_g = rho_y * h2_eq and V_A_eq = V_A0 / (1 - rho_g) are recorded as *assumptions*,
@@ -78,7 +78,7 @@ def am_transmission_unit() -> pm.Model:
     for v in ("V_A_eq", "V_E", "V_K", "V_A0"):
         m.declare(v, positive=True)
 
-    for i in ("m", "f", "o"):  # mother, father, offspring
+    for i in ("m", "p", "o"):  # maternal, paternal, offspring
         m.add_var(f"g_{i}", latent=True, label=rf"$g_{i}$")
         m.add_var(f"e_{i}", latent=True, label=rf"$e_{i}$")
         m.add_var(f"y_{i}", label=rf"$y_{i}$")
@@ -87,20 +87,20 @@ def am_transmission_unit() -> pm.Model:
         m.add_variance(f"e_{i}", "V_E")
 
     # parents: exogenous genetic values at the equilibrium scale, correlated by assortment
-    for i in ("m", "f"):
+    for i in ("m", "p"):
         m.add_variance(f"g_{i}", "V_A_eq")
-    m.add_cov("g_m", "g_f", "rho_g * V_A_eq")
+    m.add_cov("g_m", "g_p", "rho_g * V_A_eq")
 
-    # transmission: g_o = (g_m + g_f)/2 + s_o
+    # transmission: g_o = (g_m + g_p)/2 + s_o
     m.add_var("s_o", latent=True, label=r"$s_o$")
     m.add_path("g_m", "g_o", sp.Rational(1, 2))
-    m.add_path("g_f", "g_o", sp.Rational(1, 2))
+    m.add_path("g_p", "g_o", sp.Rational(1, 2))
     m.add_path("s_o", "g_o", 1)
     m.add_variance("s_o", "V_K")
 
     # each parent's environment is correlated with the *other* parent's genes
-    m.add_cov("e_m", "g_f", "rho_g * V_E")
-    m.add_cov("e_f", "g_m", "rho_g * V_E")
+    m.add_cov("e_m", "g_p", "rho_g * V_E")
+    m.add_cov("e_p", "g_m", "rho_g * V_E")
 
     m.assume("rho_g", "rho_y * h2_eq")
     m.assume("h2_eq", "V_A_eq / (V_A_eq + V_E)")
@@ -320,15 +320,15 @@ def copath_tour() -> None:
 
     m = pm.from_text(
         """
-        latent: g_m, e_m, g_f, e_f
+        latent: g_m, e_m, g_p, e_p
         positive: V_A, V_E
         y_m ~ g_m + e_m
-        y_f ~ g_f + e_f
+        y_p ~ g_p + e_p
         g_m ~~ V_A*g_m
         e_m ~~ V_E*e_m
-        g_f ~~ V_A*g_f
-        e_f ~~ V_E*e_f
-        y_m -- (rho_y/(V_A + V_E))*y_f
+        g_p ~~ V_A*g_p
+        e_p ~~ V_E*e_p
+        y_m -- (rho_y/(V_A + V_E))*y_p
         """,
         name="mated pair",
     )
@@ -336,19 +336,19 @@ def copath_tour() -> None:
     V_A, V_E, rho_y = (m.sym(s) for s in ("V_A", "V_E", "rho_y"))
     V_P = V_A + V_E
     print("  ONE co-path on the phenotypes induces covariance among ALL the causes:")
-    for x, y in [("y_m", "y_f"), ("g_m", "g_f"), ("e_m", "g_f"), ("e_m", "e_f")]:
+    for x, y in [("y_m", "y_p"), ("g_m", "g_p"), ("e_m", "g_p"), ("e_m", "e_p")]:
         print(f"    Cov[{x}, {y}] = {sp.factor(sp.simplify(e.cov(x, y)))}")
-    print(f"    ... and Cov[y_m,y_f] == rho_y*V_P: "
-          f"{sp.simplify(e.cov('y_m', 'y_f') - rho_y * V_P) == 0}")
+    print(f"    ... and Cov[y_m,y_p] == rho_y*V_P: "
+          f"{sp.simplify(e.cov('y_m', 'y_p') - rho_y * V_P) == 0}")
     print("    none of the cause-level covariances were specified.")
     print()
     print("  the decomposition is exactly Sunde's Eq. (2):")
-    print(_indent(pm.WrightTracer(m).trace("y_m", "y_f")))
+    print(_indent(pm.WrightTracer(m).trace("y_m", "y_p")))
     print()
 
     print("  a co-path induces covariance WITHOUT causing variance:")
     without = m.copy()
-    without.remove_copath("y_m", "y_f")
+    without.remove_copath("y_m", "y_p")
     same = all(
         sp.simplify(e.var(n) - pm.RAMEngine(without).var(n)) == 0 for n in m.names
     )
@@ -358,31 +358,31 @@ def copath_tour() -> None:
     print("  the decisive contrast -- split g into alleles, g = beta*(z_mat + z_pat):")
     allele = pm.from_text(
         """
-        latent: z_mat_m, z_pat_m, g_m, e_m, z_mat_f, z_pat_f, g_f, e_f
+        latent: z_mat_m, z_pat_m, g_m, e_m, z_mat_p, z_pat_p, g_p, e_p
         positive: beta, V_E
         g_m ~ beta*z_mat_m + beta*z_pat_m
-        g_f ~ beta*z_mat_f + beta*z_pat_f
+        g_p ~ beta*z_mat_p + beta*z_pat_p
         y_m ~ g_m + e_m
-        y_f ~ g_f + e_f
+        y_p ~ g_p + e_p
         z_mat_m ~~ 1/2*z_mat_m
         z_pat_m ~~ 1/2*z_pat_m
-        z_mat_f ~~ 1/2*z_mat_f
-        z_pat_f ~~ 1/2*z_pat_f
+        z_mat_p ~~ 1/2*z_mat_p
+        z_pat_p ~~ 1/2*z_pat_p
         e_m ~~ V_E*e_m
-        e_f ~~ V_E*e_f
-        y_m -- (rho_y/(beta**2 + V_E))*y_f
+        e_p ~~ V_E*e_p
+        y_m -- (rho_y/(beta**2 + V_E))*y_p
         """,
         name="allele level",
     )
     ea = pm.RAMEngine(allele)
     beta, V_E2, ry2 = (allele.sym(s) for s in ("beta", "V_E", "rho_y"))
-    print(f"    co-path      -> Cov[z_mat_m, z_mat_f] = "
-          f"{sp.factor(sp.simplify(ea.cov('z_mat_m', 'z_mat_f')))}")
+    print(f"    co-path      -> Cov[z_mat_m, z_mat_p] = "
+          f"{sp.factor(sp.simplify(ea.cov('z_mat_m', 'z_mat_p')))}")
     faked = allele.copy()
-    faked.remove_copath("y_m", "y_f")
-    faked.add_cov("y_m", "y_f", ry2 * (beta**2 + V_E2))
-    print(f"    bidirected   -> Cov[z_mat_m, z_mat_f] = "
-          f"{pm.RAMEngine(faked).cov('z_mat_m', 'z_mat_f')}   <- the whole point")
+    faked.remove_copath("y_m", "y_p")
+    faked.add_cov("y_m", "y_p", ry2 * (beta**2 + V_E2))
+    print(f"    bidirected   -> Cov[z_mat_m, z_mat_p] = "
+          f"{pm.RAMEngine(faked).cov('z_mat_m', 'z_mat_p')}   <- the whole point")
     print()
 
     print("  chains may cross co-paths from DIFFERENT mating processes (but not the same one):")
@@ -420,20 +420,20 @@ def rendering_tour() -> None:
 
     m = pm.from_text(
         """
-        latent: g_m, e_m, g_f, e_f
+        latent: g_m, e_m, g_p, e_p
         positive: V_A, V_E
         y_m ~ g_m + e_m
-        y_f ~ g_f + e_f
+        y_p ~ g_p + e_p
         g_m ~~ V_A*g_m
         e_m ~~ V_E*e_m
-        g_f ~~ V_A*g_f
-        e_f ~~ V_E*e_f
-        y_m -- (rho_y/(V_A + V_E))*y_f
+        g_p ~~ V_A*g_p
+        e_p ~~ V_E*e_p
+        y_m -- (rho_y/(V_A + V_E))*y_p
         """,
         name="mated pair",
     )
     layout = Layout({"g_m": (0, 0), "e_m": (1.7, 0), "y_m": (0.85, -1.9),
-                     "g_f": (5.1, 0), "e_f": (6.8, 0), "y_f": (5.95, -1.9)})
+                     "g_p": (5.1, 0), "e_p": (6.8, 0), "y_p": (5.95, -1.9)})
     tex = to_tikz(m, layout=layout, style=DiagramStyle(show_variances=False))
     print("  the three edge types, as emitted:")
     for line in tex.splitlines():
@@ -447,7 +447,7 @@ def rendering_tour() -> None:
             print(f"    {line.strip()}")
     print()
 
-    chain = next(c for c in pm.WrightTracer(m).trace("g_m", "g_f") if c.crosses_copaths)
+    chain = next(c for c in pm.WrightTracer(m).trace("g_m", "g_p") if c.crosses_copaths)
     highlighted = to_tikz(m, layout=layout, highlight=chain,
                           style=DiagramStyle(show_variances=False))
     print("  highlighting one traced chain (the figure this project exists to make):")

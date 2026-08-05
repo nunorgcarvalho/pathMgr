@@ -2,28 +2,28 @@
 # a mated pair (m, f) and their two full-sib children (o1, o2).
 #
 # Assortment is a SINGLE co-path between the partners' phenotypes. That one edge replaces the
-# three hand-written induced covariances this file used to carry (g_m<->g_f, e_m<->g_f,
-# e_f<->g_m), and it also supplies the one they were missing -- Cov[e_m, e_f] -- so that
-# Cov[y_m, y_f] = rho_y * V_P, the defining property of the mating model, now actually holds.
+# three hand-written induced covariances this file used to carry (g_m<->g_p, e_m<->g_p,
+# e_p<->g_m), and it also supplies the one they were missing -- Cov[e_m, e_p] -- so that
+# Cov[y_m, y_p] = rho_y * V_P, the defining property of the mating model, now actually holds.
 # The superseded encoding is kept as a regression fixture at
 # tests/fixtures/am_equilibrium_handwritten.pmg; why it was wrong is
 # docs/assortment_representation_trap.md.
 #
-# The co-path coefficient is NOT the correlation: Cov[y_m, y_f] = mu * V_P^2, so a target
+# The co-path coefficient is NOT the correlation: Cov[y_m, y_p] = mu * V_P^2, so a target
 # phenotypic correlation rho_y needs mu = rho_y / V_P. Under assortment V_P grows every
 # generation, so mu is generation-indexed -- here it is written out in terms of V_A_eq and V_E
 # rather than as a bare symbol, precisely so that dependence stays visible.
 
 units: unstandardized
-latent: g_m, e_m, g_f, e_f, g_o1, e_o1, s_o1, g_o2, e_o2, s_o2
+latent: g_m, e_m, g_p, e_p, g_o1, e_o1, s_o1, g_o2, e_o2, s_o2
 positive: V_A_eq, V_E, V_K, V_A0
 
 label: g_m = $g_{m}$
 label: e_m = $e_{m}$
 label: y_m = $y_{m}$
-label: g_f = $g_{f}$
-label: e_f = $e_{f}$
-label: y_f = $y_{f}$
+label: g_p = $g_{p}$
+label: e_p = $e_{p}$
+label: y_p = $y_{p}$
 label: g_o1 = $g_{o1}$
 label: e_o1 = $e_{o1}$
 label: y_o1 = $y_{o1}$
@@ -35,20 +35,20 @@ label: s_o2 = $s_{o2}$
 
 # phenotype: y = g + e
 y_m  ~ g_m  + e_m
-y_f  ~ g_f  + e_f
+y_p  ~ g_p  + e_p
 y_o1 ~ g_o1 + e_o1
 y_o2 ~ g_o2 + e_o2
 
-# transmission: g_o = (g_m + g_f)/2 + s_o
-g_o1 ~ 1/2*g_m + 1/2*g_f + s_o1
-g_o2 ~ 1/2*g_m + 1/2*g_f + s_o2
+# transmission: g_o = (g_m + g_p)/2 + s_o
+g_o1 ~ 1/2*g_m + 1/2*g_p + s_o1
+g_o2 ~ 1/2*g_m + 1/2*g_p + s_o2
 
 # the parents are exogenous at the equilibrium scale
 g_m ~~ V_A_eq*g_m
-g_f ~~ V_A_eq*g_f
+g_p ~~ V_A_eq*g_p
 
 e_m  ~~ V_E*e_m
-e_f  ~~ V_E*e_f
+e_p  ~~ V_E*e_p
 e_o1 ~~ V_E*e_o1
 e_o2 ~~ V_E*e_o2
 s_o1 ~~ V_K*s_o1
@@ -56,7 +56,7 @@ s_o2 ~~ V_K*s_o2
 
 # assortative mating: one co-path, mu = rho_y / V_P. Every induced covariance among the
 # partners' causes -- g with g, e with g, e with e -- follows from this and is NOT written out.
-y_m -- (rho_y/(V_A_eq + V_E))*y_f
+y_m -- (rho_y/(V_A_eq + V_E))*y_p
 
 # the coupled equilibrium fixed point -- to be solved, never traced
 assume: rho_g = rho_y*h2_eq

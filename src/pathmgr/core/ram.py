@@ -394,7 +394,7 @@ class RAMEngine:
         **Why there is no clean geometric-series closed form.** Allowing repeats would give
         ``sigma0 (I - C sigma0)^-1`` with ``C`` holding the co-path coefficients, and that
         overcounts. On a single mated pair with one co-path, expanding the series term by term
-        at the ``(y_m, y_f)`` entry gives
+        at the ``(y_m, y_p)`` entry gives
 
             k=1:  rho_y V_P     <- the only Sunde-legal term
             k=3:  rho_y^3 V_P   <- traverses the SAME co-path three times

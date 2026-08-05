@@ -47,7 +47,7 @@ def test_the_model_is_structurally_sound():
     assert [i for i in model.validate() if i.severity == "error"] == []
     assert model.is_recursive
     assert len(model.copaths) == 1
-    assert model.copath_value("y_m", "y_f") == motif.mu
+    assert model.copath_value("y_m", "y_p") == motif.mu
 
 
 def test_alleles_are_indexed_by_parental_origin_not_transmission():
@@ -68,7 +68,7 @@ def test_alleles_are_indexed_by_parental_origin_not_transmission():
 
 
 def test_transmission_coefficients_are_one_half_not_root_one_half():
-    """Regression coefficients: E[child's allele | mother] = (A + B)/2."""
+    """Regression coefficients: E[child's allele | maternal] = (A + B)/2."""
     motif = allele_motif(n_variants=1)
     model = motif.model
     for parent_origin in ("mat", "pat"):
@@ -76,7 +76,7 @@ def test_transmission_coefficients_are_one_half_not_root_one_half():
             motif.z("m", parent_origin, 0), motif.z("o", "mat", 0)
         ) == sp.Rational(1, 2)
         assert model.path_coeff(
-            motif.z("f", parent_origin, 0), motif.z("o", "pat", 0)
+            motif.z("p", parent_origin, 0), motif.z("o", "pat", 0)
         ) == sp.Rational(1, 2)
 
 
@@ -113,12 +113,12 @@ def test_validation_table():
     expected = {
         # the co-path reaches the causes -- NOT specified anywhere
         "Cov[z_mat[m,0], z_mat[f,0]]": (
-            engine.cov(motif.z("m", "mat", 0), motif.z("f", "mat", 0)),
+            engine.cov(motif.z("m", "mat", 0), motif.z("p", "mat", 0)),
             b[0] ** 2 * rho_y / (4 * V_P),
         ),
         # cross-variant coupling
         "Cov[z_mat[m,0], z_mat[f,1]]": (
-            engine.cov(motif.z("m", "mat", 0), motif.z("f", "mat", 1)),
+            engine.cov(motif.z("m", "mat", 0), motif.z("p", "mat", 1)),
             b[0] * b[1] * rho_y / (4 * V_P),
         ),
         # per-variant inflation
@@ -147,7 +147,7 @@ def test_validation_table():
         assert sp.simplify(got - want) == 0, f"{label}: {sp.simplify(got)} != {sp.simplify(want)}"
 
     # and the defining property of the mating model
-    assert sp.simplify(engine.cov("y_m", "y_f") - rho_y * V_P) == 0
+    assert sp.simplify(engine.cov("y_m", "y_p") - rho_y * V_P) == 0
 
 
 def test_the_V_P_free_rows_really_are_V_P_free():
@@ -169,7 +169,7 @@ def test_the_V_P_one_forms_would_have_passed_wrongly():
     engine = pm.RAMEngine(motif.model)
     b, V_P, rho_y = motif.betas, motif.V_P, motif.rho_y
 
-    got = engine.cov(motif.z("m", "mat", 0), motif.z("f", "mat", 0))
+    got = engine.cov(motif.z("m", "mat", 0), motif.z("p", "mat", 0))
     general = b[0] ** 2 * rho_y / (4 * V_P)
     omitted = b[0] ** 2 * rho_y / 4
 
@@ -276,7 +276,7 @@ def test_rho_y_zero_collapses_to_random_mating():
     assert sp.simplify(engine.var(motif.g(o1)).subs(zero) - V_A) == 0
     assert sp.simplify(engine.cov(motif.y("m"), motif.y(o1)).subs(zero) - V_A / 2) == 0
     assert sp.simplify(engine.cov(motif.y(o1), motif.y(o2)).subs(zero) - V_A / 2) == 0
-    assert sp.simplify(engine.cov(motif.z("m", "mat", 0), motif.z("f", "mat", 0)).subs(zero)) == 0
+    assert sp.simplify(engine.cov(motif.z("m", "mat", 0), motif.z("p", "mat", 0)).subs(zero)) == 0
 
 
 def test_the_founders_are_unaffected_by_their_own_assortment():
@@ -297,7 +297,7 @@ def test_the_founders_are_unaffected_by_their_own_assortment():
                 if j != k:
                     assert sp.simplify(engine.cov(motif.x(founder, k), motif.x(founder, j))) == 0
     # but their genetic values ARE correlated with each other -- that is the assortment
-    assert sp.simplify(engine.cov(motif.g("m"), motif.g("f")) - motif.rho_g * motif.V_A) == 0
+    assert sp.simplify(engine.cov(motif.g("m"), motif.g("p")) - motif.rho_g * motif.V_A) == 0
 
 
 # ======================================================================================
@@ -359,13 +359,13 @@ def test_a_bidirected_edge_instead_of_the_copath_gives_zero_at_the_alleles():
     """The sharpest available test of task-20260804-173343."""
     motif = allele_motif(n_variants=2)
     faked = motif.model.copy("bidirected instead")
-    faked.remove_copath("y_m", "y_f")
-    faked.add_cov("y_m", "y_f", motif.rho_y * motif.V_P)
+    faked.remove_copath("y_m", "y_p")
+    faked.add_cov("y_m", "y_p", motif.rho_y * motif.V_P)
 
     engine = pm.RAMEngine(faked)
-    assert sp.simplify(engine.cov("y_m", "y_f") - motif.rho_y * motif.V_P) == 0
-    assert engine.cov(motif.z("m", "mat", 0), motif.z("f", "mat", 0)) == 0
-    assert engine.cov(motif.g("m"), motif.g("f")) == 0
+    assert sp.simplify(engine.cov("y_m", "y_p") - motif.rho_y * motif.V_P) == 0
+    assert engine.cov(motif.z("m", "mat", 0), motif.z("p", "mat", 0)) == 0
+    assert engine.cov(motif.g("m"), motif.g("p")) == 0
     assert engine.cov(motif.x("o", 0), motif.x("o", 1)) == 0  # and no LD reaches the offspring
 
 
@@ -374,10 +374,10 @@ def test_both_engines_agree_on_the_allele_motif():
     engine = pm.RAMEngine(motif.model)
     tracer = pm.WrightTracer(motif.model, max_chains=500_000)
     for x, y in [
-        (motif.z("m", "mat", 0), motif.z("f", "mat", 0)),
+        (motif.z("m", "mat", 0), motif.z("p", "mat", 0)),
         (motif.x("o", 0), motif.x("o", 1)),
         (motif.g("m"), motif.g("o")),
-        (motif.y("m"), motif.y("f")),
+        (motif.y("m"), motif.y("p")),
         (motif.z("o", "mat", 0), motif.z("o", "pat", 0)),
     ]:
         assert sp.simplify(tracer.cov(x, y) - engine.cov(x, y)) == 0, f"Cov[{x}, {y}]"

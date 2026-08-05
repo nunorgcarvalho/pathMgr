@@ -6,8 +6,8 @@
 # validation against relative_covariance.tex passed. It has two problems, both of which are why
 # task-20260804-173343 introduced the co-path:
 #
-# 1. IT IS INCOMPLETE. Cov[e_m, e_f] is missing, so this model gives
-#        Cov[y_m, y_f] = V_A_eq*rho_g + 2*V_E*rho_g
+# 1. IT IS INCOMPLETE. Cov[e_m, e_p] is missing, so this model gives
+#        Cov[y_m, y_p] = V_A_eq*rho_g + 2*V_E*rho_g
 #    where the mating model requires rho_y*V_P. The shortfall is exactly rho_y*V_E^2/V_P -- the
 #    absent term. At V_A_eq=0.46, V_E=0.6, rho_y=0.3: 0.2161 against the correct 0.3180.
 #    The three terms that WERE written are the ones the lineal/collateral asymmetry needs, which
@@ -23,15 +23,15 @@
 # quantity this file gets right, and fixes the one it gets wrong.
 
 units: unstandardized
-latent: g_m, e_m, g_f, e_f, g_o1, e_o1, s_o1, g_o2, e_o2, s_o2
+latent: g_m, e_m, g_p, e_p, g_o1, e_o1, s_o1, g_o2, e_o2, s_o2
 positive: V_A_eq, V_E, V_K, V_A0
 
 label: g_m = $g_{m}$
 label: e_m = $e_{m}$
 label: y_m = $y_{m}$
-label: g_f = $g_{f}$
-label: e_f = $e_{f}$
-label: y_f = $y_{f}$
+label: g_p = $g_{p}$
+label: e_p = $e_{p}$
+label: y_p = $y_{p}$
 label: g_o1 = $g_{o1}$
 label: e_o1 = $e_{o1}$
 label: y_o1 = $y_{o1}$
@@ -42,19 +42,19 @@ label: y_o2 = $y_{o2}$
 label: s_o2 = $s_{o2}$
 
 y_m  ~ g_m  + e_m
-y_f  ~ g_f  + e_f
+y_p  ~ g_p  + e_p
 y_o1 ~ g_o1 + e_o1
 y_o2 ~ g_o2 + e_o2
 
-g_o1 ~ 1/2*g_m + 1/2*g_f + s_o1
-g_o2 ~ 1/2*g_m + 1/2*g_f + s_o2
+g_o1 ~ 1/2*g_m + 1/2*g_p + s_o1
+g_o2 ~ 1/2*g_m + 1/2*g_p + s_o2
 
 g_m ~~ V_A_eq*g_m
-g_f ~~ V_A_eq*g_f
-g_m ~~ (rho_g*V_A_eq)*g_f
+g_p ~~ V_A_eq*g_p
+g_m ~~ (rho_g*V_A_eq)*g_p
 
 e_m  ~~ V_E*e_m
-e_f  ~~ V_E*e_f
+e_p  ~~ V_E*e_p
 e_o1 ~~ V_E*e_o1
 e_o2 ~~ V_E*e_o2
 s_o1 ~~ V_K*s_o1
@@ -62,8 +62,8 @@ s_o2 ~~ V_K*s_o2
 
 # each parent's environment correlated with the OTHER parent's genes -- but NOT e with e,
 # which is the omission described above
-e_m ~~ (rho_g*V_E)*g_f
-e_f ~~ (rho_g*V_E)*g_m
+e_m ~~ (rho_g*V_E)*g_p
+e_p ~~ (rho_g*V_E)*g_m
 
 assume: rho_g = rho_y*h2_eq
 assume: h2_eq = V_A_eq/(V_A_eq + V_E)

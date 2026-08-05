@@ -61,7 +61,7 @@ def test_partners_correlate_at_rho_y(depth, engines):
     """
     model, engine = engines[depth]
     _, _, _, rho_y, fixed_point = _symbols(model)
-    mate_corr = engine.corr("y_0m", "y_0f").subs(fixed_point)
+    mate_corr = engine.corr("y_0m", "y_0p").subs(fixed_point)
     assert sp.simplify((mate_corr / rho_y) ** 2 - 1) == 0, (
         f"depth {depth}: mate corr {sp.simplify(mate_corr)}"
     )

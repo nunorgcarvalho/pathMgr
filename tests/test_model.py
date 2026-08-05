@@ -68,12 +68,12 @@ def test_path_coefficient_defaults_to_one():
 
 
 def test_coefficients_accept_numbers_symbols_and_expressions():
-    m = pm.Model().add_vars("g_m", "g_f", "g_o")
+    m = pm.Model().add_vars("g_m", "g_p", "g_o")
     m.add_path("g_m", "g_o", sp.Rational(1, 2))
-    m.add_path("g_f", "g_o", "1/2")
-    m.add_cov("g_m", "g_f", "rho_g * V_A")
-    assert m.path_coeff("g_m", "g_o") == m.path_coeff("g_f", "g_o") == sp.Rational(1, 2)
-    assert m.cov_value("g_m", "g_f") == m.sym("rho_g") * m.sym("V_A")
+    m.add_path("g_p", "g_o", "1/2")
+    m.add_cov("g_m", "g_p", "rho_g * V_A")
+    assert m.path_coeff("g_m", "g_o") == m.path_coeff("g_p", "g_o") == sp.Rational(1, 2)
+    assert m.cov_value("g_m", "g_p") == m.sym("rho_g") * m.sym("V_A")
 
 
 # -- symbols --------------------------------------------------------------------------

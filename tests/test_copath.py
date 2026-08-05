@@ -31,7 +31,7 @@ def mated_pair() -> pm.Model:
     for v in ("V_A", "V_E"):
         m.declare(v, positive=True)
     V_A, V_E, rho_y = (m.sym(s) for s in ("V_A", "V_E", "rho_y"))
-    for i in ("m", "f"):
+    for i in ("m", "p"):
         m.add_var(f"g_{i}", latent=True)
         m.add_var(f"e_{i}", latent=True)
         m.add_var(f"y_{i}")
@@ -39,7 +39,7 @@ def mated_pair() -> pm.Model:
         m.add_path(f"e_{i}", f"y_{i}", 1)
         m.add_variance(f"g_{i}", V_A)
         m.add_variance(f"e_{i}", V_E)
-    m.add_copath("y_m", "y_f", rho_y / (V_A + V_E))  # mu = rho_y / V_P
+    m.add_copath("y_m", "y_p", rho_y / (V_A + V_E))  # mu = rho_y / V_P
     return m
 
 
@@ -50,7 +50,7 @@ def allele_level_pair() -> pm.Model:
         m.declare(v, positive=True)
     beta, V_E, rho_y = (m.sym(s) for s in ("beta", "V_E", "rho_y"))
     V_P = beta**2 + V_E  # Var[g] = beta^2 * (1/2 + 1/2) = beta^2
-    for i in ("m", "f"):
+    for i in ("m", "p"):
         for allele in ("mat", "pat"):
             m.add_var(f"z_{allele}_{i}", latent=True)
             m.add_variance(f"z_{allele}_{i}", sp.Rational(1, 2))
@@ -62,7 +62,7 @@ def allele_level_pair() -> pm.Model:
         m.add_path(f"g_{i}", f"y_{i}", 1)
         m.add_path(f"e_{i}", f"y_{i}", 1)
         m.add_variance(f"e_{i}", V_E)
-    m.add_copath("y_m", "y_f", rho_y / V_P)
+    m.add_copath("y_m", "y_p", rho_y / V_P)
     return m
 
 
@@ -99,10 +99,10 @@ def _pair_symbols(m: pm.Model):
 @pytest.mark.parametrize(
     "x,y,expected",
     [
-        ("y_m", "y_f", "rho_y * V_P"),
-        ("g_m", "g_f", "rho_g * V_A"),
-        ("e_m", "g_f", "rho_g * V_E"),
-        ("e_m", "e_f", "rho_y * V_E**2 / V_P"),
+        ("y_m", "y_p", "rho_y * V_P"),
+        ("g_m", "g_p", "rho_g * V_A"),
+        ("e_m", "g_p", "rho_g * V_E"),
+        ("e_m", "e_p", "rho_y * V_E**2 / V_P"),
     ],
 )
 def test_single_pair_identities(engine, x, y, expected):
@@ -118,9 +118,9 @@ def test_partner_covariance_is_rho_y_times_V_P():
     m = mated_pair()
     _, _, rho_y, V_P, _ = _pair_symbols(m)
     for engine in (pm.RAMEngine(m), pm.WrightTracer(m)):
-        assert sp.simplify(engine.cov("y_m", "y_f") - rho_y * V_P) == 0
+        assert sp.simplify(engine.cov("y_m", "y_p") - rho_y * V_P) == 0
     # and the correlation really is rho_y
-    corr = pm.RAMEngine(m).corr("y_m", "y_f")
+    corr = pm.RAMEngine(m).corr("y_m", "y_p")
     assert sp.simplify((corr / rho_y) ** 2 - 1) == 0
 
 
@@ -129,9 +129,9 @@ def test_partner_correlations_decompose_as_sunde_equation_2():
     m = mated_pair()
     V_A, V_E, rho_y, V_P, _ = _pair_symbols(m)
     e = pm.RAMEngine(m)
-    total = e.cov("y_m", "y_f")
+    total = e.cov("y_m", "y_p")
     parts = (
-        e.cov("g_m", "g_f") + e.cov("e_m", "e_f") + e.cov("e_m", "g_f") + e.cov("g_m", "e_f")
+        e.cov("g_m", "g_p") + e.cov("e_m", "e_p") + e.cov("e_m", "g_p") + e.cov("g_m", "e_p")
     )
     assert sp.simplify(total - parts) == 0
     assert sp.simplify(total - rho_y * V_P) == 0
@@ -141,13 +141,13 @@ def test_a_copath_induces_covariance_without_causing_variance():
     """Sunde's defining phrase. Adding a co-path must not change any variance."""
     m = mated_pair()
     without = m.copy()
-    without.remove_copath("y_m", "y_f")
+    without.remove_copath("y_m", "y_p")
     with_engine, without_engine = pm.RAMEngine(m), pm.RAMEngine(without)
     for node in m.names:
         assert sp.simplify(with_engine.var(node) - without_engine.var(node)) == 0, node
     # but it does change the cross-partner covariances
-    assert without_engine.cov("y_m", "y_f") == 0
-    assert with_engine.cov("y_m", "y_f") != 0
+    assert without_engine.cov("y_m", "y_p") == 0
+    assert with_engine.cov("y_m", "y_p") != 0
 
 
 # ======================================================================================
@@ -155,26 +155,26 @@ def test_a_copath_induces_covariance_without_causing_variance():
 # ======================================================================================
 @pytest.mark.parametrize("engine", ["ram", "tracer"])
 def test_copath_reaches_the_causes_but_a_bidirected_edge_does_not(engine):
-    """Cov[z_mat_m, z_mat_f] = beta^2 rho_y / (4 V_P), WITHOUT being specified.
+    """Cov[z_mat_m, z_mat_p] = beta^2 rho_y / (4 V_P), WITHOUT being specified.
 
     This is what proves a co-path is not reducible to a bidirected edge: the association has to
     propagate backward from the matched phenotypes to their causes. The same model with a
-    bidirected edge at (y_m, y_f) gives 0 for every cause-level covariance.
+    bidirected edge at (y_m, y_p) gives 0 for every cause-level covariance.
     """
     m = allele_level_pair()
     beta, V_E, rho_y = (m.sym(s) for s in ("beta", "V_E", "rho_y"))
     V_P = beta**2 + V_E
     engine_obj = pm.RAMEngine(m) if engine == "ram" else pm.WrightTracer(m)
 
-    assert sp.simplify(engine_obj.cov("z_mat_m", "z_mat_f") - beta**2 * rho_y / (4 * V_P)) == 0
+    assert sp.simplify(engine_obj.cov("z_mat_m", "z_mat_p") - beta**2 * rho_y / (4 * V_P)) == 0
     # every allele pairing across partners, by symmetry
     for a in ("mat", "pat"):
         for b in ("mat", "pat"):
-            got = engine_obj.cov(f"z_{a}_m", f"z_{b}_f")
+            got = engine_obj.cov(f"z_{a}_m", f"z_{b}_p")
             assert sp.simplify(got - beta**2 * rho_y / (4 * V_P)) == 0
     # sanity: the allele decomposition really does give Var[g] = beta^2 and the pair identity
     assert sp.simplify(engine_obj.var("g_m") - beta**2) == 0
-    assert sp.simplify(engine_obj.cov("y_m", "y_f") - rho_y * V_P) == 0
+    assert sp.simplify(engine_obj.cov("y_m", "y_p") - rho_y * V_P) == 0
 
 
 def test_a_bidirected_edge_gives_zero_at_the_causes():
@@ -184,14 +184,14 @@ def test_a_bidirected_edge_gives_zero_at_the_causes():
     V_P = beta**2 + V_E
 
     faked = m.copy("bidirected instead")
-    faked.remove_copath("y_m", "y_f")
-    faked.add_cov("y_m", "y_f", rho_y * V_P)  # tuned to give the right Cov[y_m, y_f]
+    faked.remove_copath("y_m", "y_p")
+    faked.add_cov("y_m", "y_p", rho_y * V_P)  # tuned to give the right Cov[y_m, y_p]
 
     e = pm.RAMEngine(faked)
-    assert sp.simplify(e.cov("y_m", "y_f") - rho_y * V_P) == 0  # the matched variables: fine
-    assert e.cov("z_mat_m", "z_mat_f") == 0  # the causes: wrong
-    assert e.cov("g_m", "g_f") == 0
-    assert e.cov("e_m", "e_f") == 0
+    assert sp.simplify(e.cov("y_m", "y_p") - rho_y * V_P) == 0  # the matched variables: fine
+    assert e.cov("z_mat_m", "z_mat_p") == 0  # the causes: wrong
+    assert e.cov("g_m", "g_p") == 0
+    assert e.cov("e_m", "e_p") == 0
 
 
 # ======================================================================================
@@ -239,10 +239,10 @@ def test_the_chain_crossing_two_copaths_is_itemized():
 def test_the_same_mating_process_is_used_at_most_once_per_chain():
     """Sunde, Supplementary Note 3. Without it, Var[y] would gain spurious co-path terms."""
     m = pm.Model("one couple")
-    for i in ("m", "f"):
+    for i in ("m", "p"):
         m.add_var(f"y_{i}")
         m.add_variance(f"y_{i}", "V_P")
-    m.add_copath("y_m", "y_f", "mu")
+    m.add_copath("y_m", "y_p", "mu")
 
     d = pm.WrightTracer(m).trace("y_m", "y_m")
     assert max((len(c.crossings) for c in d), default=0) == 0  # no chain reuses the co-path
@@ -253,25 +253,25 @@ def test_the_same_mating_process_is_used_at_most_once_per_chain():
 def test_two_copaths_on_one_mating_process_are_still_limited_to_one_per_chain():
     """Cross-trait assortment: one couple, several co-paths, sharing a process identifier."""
     m = pm.Model("cross-trait")
-    for i in ("m", "f"):
+    for i in ("m", "p"):
         for v in ("S", "Sx"):
             m.add_var(f"{v}_{i}")
             m.add_variance(f"{v}_{i}", f"V_{v}")
-    m.add_copath("S_m", "S_f", "mu", process="couple")
-    m.add_copath("S_m", "Sx_f", "mu_prime", process="couple")
+    m.add_copath("S_m", "S_p", "mu", process="couple")
+    m.add_copath("S_m", "Sx_p", "mu_prime", process="couple")
     assert m.mating_processes == ("couple",)
 
-    for chain in pm.WrightTracer(m).trace("S_m", "Sx_f"):
+    for chain in pm.WrightTracer(m).trace("S_m", "Sx_p"):
         assert len(chain.crossings) <= 1
     # naming them as distinct processes WOULD allow a two-crossing chain -- the rule is real
     split = pm.Model("cross-trait, split processes")
-    for i in ("m", "f"):
+    for i in ("m", "p"):
         for v in ("S", "Sx"):
             split.add_var(f"{v}_{i}")
             split.add_variance(f"{v}_{i}", f"V_{v}")
-    split.add_copath("S_m", "S_f", "mu", process="a")
-    split.add_copath("S_m", "Sx_f", "mu_prime", process="b")
-    assert any(len(c.crossings) == 2 for c in pm.WrightTracer(split).trace("S_f", "Sx_f"))
+    split.add_copath("S_m", "S_p", "mu", process="a")
+    split.add_copath("S_m", "Sx_p", "mu_prime", process="b")
+    assert any(len(c.crossings) == 2 for c in pm.WrightTracer(split).trace("S_p", "Sx_p"))
 
 
 # ======================================================================================
@@ -310,17 +310,17 @@ def test_the_geometric_series_form_overcounts():
     index = {n: i for i, n in enumerate(e.order)}
 
     without = m.copy()
-    without.remove_copath("y_m", "y_f")
+    without.remove_copath("y_m", "y_p")
     sigma0 = pm.RAMEngine(without).sigma()
 
     n = sigma0.rows
     C = sp.zeros(n, n)
     mu = rho_y / V_P
-    C[index["y_m"], index["y_f"]] = mu
-    C[index["y_f"], index["y_m"]] = mu
+    C[index["y_m"], index["y_p"]] = mu
+    C[index["y_p"], index["y_m"]] = mu
     geometric = sigma0 * (sp.eye(n) - C * sigma0).inv()
 
-    entry = (index["y_m"], index["y_f"])
+    entry = (index["y_m"], index["y_p"])
     assert sp.simplify(e.sigma()[entry] - rho_y * V_P) == 0        # pathMgr: correct
     assert sp.simplify(geometric[entry] - rho_y * V_P) != 0        # series: not
     # and the excess is exactly the odd-power reuse terms
@@ -375,7 +375,7 @@ def test_copath_example_reproduces_the_writeup_results():
     assert sp.simplify(
         e.var("y_o1").subs({V_K: V_A0 / 2}) - (V_A0 / 2 + V_A * (1 + rho_g) / 2 + V_E)
     ) == 0                                                                    # recursion
-    assert sp.simplify(e.cov("y_m", "y_f") - rho_y * V_P) == 0                # the fix
+    assert sp.simplify(e.cov("y_m", "y_p") - rho_y * V_P) == 0                # the fix
 
 
 def test_the_superseded_encoding_is_wrong_in_exactly_the_documented_way():
@@ -385,14 +385,14 @@ def test_the_superseded_encoding_is_wrong_in_exactly_the_documented_way():
     V_A, V_E, rho_y, rho_g = (old.sym(s) for s in ("V_A_eq", "V_E", "rho_y", "rho_g"))
     V_P = V_A + V_E
 
-    assert sp.simplify(e.cov("y_m", "y_f") - (V_A * rho_g + 2 * V_E * rho_g)) == 0
-    assert e.cov("e_m", "e_f") == 0
+    assert sp.simplify(e.cov("y_m", "y_p") - (V_A * rho_g + 2 * V_E * rho_g)) == 0
+    assert e.cov("e_m", "e_p") == 0
     fixed_point = {rho_g: rho_y * V_A / V_P}
-    shortfall = sp.simplify((rho_y * V_P - e.cov("y_m", "y_f")).subs(fixed_point))
+    shortfall = sp.simplify((rho_y * V_P - e.cov("y_m", "y_p")).subs(fixed_point))
     assert sp.simplify(shortfall - rho_y * V_E**2 / V_P) == 0
 
     numbers = {V_A: sp.Rational(46, 100), V_E: sp.Rational(6, 10), rho_y: sp.Rational(3, 10)}
-    assert abs(float(sp.N(e.cov("y_m", "y_f").subs(fixed_point).subs(numbers))) - 0.2161) < 1e-3
+    assert abs(float(sp.N(e.cov("y_m", "y_p").subs(fixed_point).subs(numbers))) - 0.2161) < 1e-3
 
 
 def test_both_encodings_agree_on_everything_the_old_one_got_right():
@@ -404,13 +404,13 @@ def test_both_encodings_agree_on_everything_the_old_one_got_right():
     fixed_point = {rho_g: old.sym("rho_y") * old.sym("V_A_eq") / (old.sym("V_A_eq") + old.sym("V_E"))}
 
     for x, y in [
-        ("g_m", "g_f"), ("e_m", "g_f"), ("y_o1", "y_o2"), ("y_m", "y_o1"),
+        ("g_m", "g_p"), ("e_m", "g_p"), ("y_o1", "y_o2"), ("y_m", "y_o1"),
         ("g_o1", "g_o2"), ("y_o1", "y_o1"), ("g_m", "g_o1"),
     ]:
         assert sp.simplify(e_new.cov(x, y) - e_old.cov(x, y).subs(fixed_point)) == 0, f"{x},{y}"
     # and they differ on exactly the omission
     assert sp.simplify(
-        e_new.cov("e_m", "e_f") - e_old.cov("e_m", "e_f").subs(fixed_point)
+        e_new.cov("e_m", "e_p") - e_old.cov("e_m", "e_p").subs(fixed_point)
     ) != 0
 
 
@@ -459,13 +459,13 @@ def test_text_grammar_round_trips_copaths():
     m = pm.from_text(
         """
         y_m ~~ V_P*y_m
-        y_f ~~ V_P*y_f
-        y_m -- mu*y_f
+        y_p ~~ V_P*y_p
+        y_m -- mu*y_p
         S_m -- mu2*S_p [couple0]
         """
     )
     assert len(m.copaths) == 2
-    assert set(m.mating_processes) == {"y_f--y_m", "couple0"}
+    assert set(m.mating_processes) == {"y_m--y_p", "couple0"}
     again = pm.from_text(m.to_text())
     assert [str(c) for c in again.copaths] == [str(c) for c in m.copaths]
 
@@ -479,7 +479,7 @@ def test_a_coefficient_containing_a_double_minus_is_not_a_copath():
 
 def test_empty_process_name_rejected():
     with pytest.raises(pm.TextSyntaxError, match="empty mating-process name"):
-        pm.from_text("y_m -- mu*y_f []")
+        pm.from_text("y_m -- mu*y_p []")
 
 
 def test_copath_edges_are_exposed_for_diagram_highlighting():

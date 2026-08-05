@@ -17,7 +17,7 @@ establishes about the API, both of which drove design choices:
    ``rho_g = rho_y h2_eq``. Before substitution the model gives
    ``V_A_eq(1 + rho_g)/2 + rho_g V_E/2`` -- correct but unrecognisable. That relation is not
    an edge, which is why :meth:`Model.assume` exists.
-2. The lineal/collateral asymmetry is carried entirely by ``Cov[e_m, g_f] = rho_g V_E`` --
+2. The lineal/collateral asymmetry is carried entirely by ``Cov[e_m, g_p] = rho_g V_E`` --
    a bidirected edge between one individual's *environment* and another's *genes*. So
    bidirected edges must be allowed between arbitrary latents, with expression values.
 
@@ -46,7 +46,7 @@ def am_pair_with_two_children() -> pm.Model:
     for v in ("V_A_eq", "V_E", "V_K", "V_A0"):
         m.declare(v, positive=True)
 
-    for i in ("m", "f", "o1", "o2"):
+    for i in ("m", "p", "o1", "o2"):
         m.add_var(f"g_{i}", latent=True, label=rf"$g_{{{i}}}$")
         m.add_var(f"e_{i}", latent=True, label=rf"$e_{{{i}}}$")
         m.add_var(f"y_{i}", label=rf"$y_{{{i}}}$")
@@ -55,19 +55,19 @@ def am_pair_with_two_children() -> pm.Model:
         m.add_variance(f"e_{i}", "V_E")
 
     # parents are exogenous at the equilibrium scale; assortment correlates their g
-    for i in ("m", "f"):
+    for i in ("m", "p"):
         m.add_variance(f"g_{i}", "V_A_eq")
-    m.add_cov("g_m", "g_f", "rho_g * V_A_eq")
+    m.add_cov("g_m", "g_p", "rho_g * V_A_eq")
 
     # each parent's environment is correlated with the OTHER parent's genes
-    m.add_cov("e_m", "g_f", "rho_g * V_E")
-    m.add_cov("e_f", "g_m", "rho_g * V_E")
+    m.add_cov("e_m", "g_p", "rho_g * V_E")
+    m.add_cov("e_p", "g_m", "rho_g * V_E")
 
-    # transmission: g_o = (g_m + g_f)/2 + s_o,  Var[s_o] = V_K
+    # transmission: g_o = (g_m + g_p)/2 + s_o,  Var[s_o] = V_K
     for o in ("o1", "o2"):
         m.add_var(f"s_{o}", latent=True, label=rf"$s_{{{o}}}$")
         m.add_path("g_m", f"g_{o}", sp.Rational(1, 2))
-        m.add_path("g_f", f"g_{o}", sp.Rational(1, 2))
+        m.add_path("g_p", f"g_{o}", sp.Rational(1, 2))
         m.add_path(f"s_{o}", f"g_{o}", 1)
         m.add_variance(f"s_{o}", "V_K")
 
@@ -100,13 +100,13 @@ def test_the_copath_encoding_round_trips_too():
 
 def test_am_model_is_structurally_sane():
     m = am_pair_with_two_children()
-    assert m.observed == ("y_m", "y_f", "y_o1", "y_o2")
+    assert m.observed == ("y_m", "y_p", "y_o1", "y_o2")
     assert m.is_recursive
     assert m.validate() == []
     # g_o is endogenous: its variance is implied, never stated
     for o in ("o1", "o2"):
         assert m.cov_value(f"g_{o}", f"g_{o}") is None
-        assert set(m.parents(f"g_{o}")) == {"g_m", "g_f", f"s_{o}"}
+        assert set(m.parents(f"g_{o}")) == {"g_m", "g_p", f"s_{o}"}
 
 
 def test_collateral_result_full_siblings():

@@ -27,12 +27,12 @@ Directed paths -- ``dst ~ terms``, read as "dst regresses on ..."::
 
     y_i ~ g_i + e_i                            # coefficient 1 is implied
     y   ~ b1*x1 + b2*x2
-    g_o ~ 1/2*g_m + 1/2*g_f + s_o              # exact rationals, not floats
+    g_o ~ 1/2*g_m + 1/2*g_p + s_o              # exact rationals, not floats
     g_c ~ ((1 + rho_g)/2)*g_p                  # parenthesise a compound coefficient
 
 Co-paths -- ``a -- terms``, covariance from matching (Sunde's arrowless line)::
 
-    y_m -- mu*y_f                              # a co-path; mu is NOT the correlation
+    y_m -- mu*y_p                              # a co-path; mu is NOT the correlation
     S_m -- mu*S_p [couple0]                    # name the mating process explicitly
     S_m -- (mu_prime)*Sx_p [couple0]           # a second co-path on the SAME process
 
@@ -46,7 +46,7 @@ Bidirected covariances -- ``a ~~ terms``, disturbance covariances (see
     x1 ~~ V_1*x1                               # a variance
     x1 ~~ c12*x2                               # a covariance
     g_i ~~ (V_A*pi_ij)*g_j                     # expression value
-    e_m ~~ (rho_g*V_E)*g_f                     # one person's environment, another's genes
+    e_m ~~ (rho_g*V_E)*g_p                     # one person's environment, another's genes
 
 The one rule worth internalising
 --------------------------------

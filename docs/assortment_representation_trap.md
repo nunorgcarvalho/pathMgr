@@ -12,7 +12,7 @@ hand-written prose and belongs in a hand-written file.
 ## The trap
 
 Mates' genetic values are correlated, so the obvious encoding is a bidirected edge
-`g_mother <-> g_father`. That is correct **only while both are exogenous** — as in a founding
+`g_m <-> g_p`. That is correct **only while both are exogenous** — as in a founding
 pair. Once a mate is a child in the pedigree, their genetic value is endogenous, and a bidirected
 edge is a covariance between *disturbances*, not between variables. Asserting that an endogenous
 variable's disturbance covaries with something, when that disturbance is fully determined by its
@@ -57,9 +57,9 @@ wherever `V_P` has moved.
 
 | | exogenous mates | endogenous mates | reaches the causes | valid off equilibrium |
 |---|---|---|---|---|
-| bidirected `g_m <-> g_f` | correct | **non-PSD, silently** | no | n/a |
+| bidirected `g_m <-> g_p` | correct | **non-PSD, silently** | no | n/a |
 | directed from `y_focal` | correct | correct | yes | no (equilibrium-only) |
-| co-path `y_m -- y_f` | correct | correct | yes | yes, with `mu_t = rho_y/V_P(t)` |
+| co-path `y_m -- y_p` | correct | correct | yes | yes, with `mu_t = rho_y/V_P(t)` |
 
 Both correct encodings are kept, and both are in the battery, so the two-engine agreement sweep
 covers them. `tests/fixtures/am_equilibrium_handwritten.pmg` retains the **superseded** encoding

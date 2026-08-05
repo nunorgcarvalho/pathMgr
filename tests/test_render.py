@@ -47,24 +47,24 @@ def copath_chain(model: pm.Model):
     The fixture deliberately carries BOTH a bidirected edge and a co-path between the partners,
     so `chains[0]` is whichever came first -- pick by what the chain actually crosses.
     """
-    return next(c for c in pm.WrightTracer(model).trace("g_m", "g_f") if c.crosses_copaths)
+    return next(c for c in pm.WrightTracer(model).trace("g_m", "g_p") if c.crosses_copaths)
 
 
 def three_edge_model() -> pm.Model:
     """A model carrying all three edge types, a latent/observed mix, and a variance."""
     return pm.from_text(
         """
-        latent: g_m, e_m, g_f, e_f
+        latent: g_m, e_m, g_p, e_p
         positive: V_A, V_E
         label: g_m = $g_m$
         y_m ~ g_m + e_m
-        y_f ~ g_f + e_f
+        y_p ~ g_p + e_p
         g_m ~~ V_A*g_m
         e_m ~~ V_E*e_m
-        g_f ~~ V_A*g_f
-        e_f ~~ V_E*e_f
-        g_m ~~ c_gg*g_f
-        y_m -- (rho_y/(V_A + V_E))*y_f
+        g_p ~~ V_A*g_p
+        e_p ~~ V_E*e_p
+        g_m ~~ c_gg*g_p
+        y_m -- (rho_y/(V_A + V_E))*y_p
         """,
         name="three edge types",
     )
@@ -104,7 +104,7 @@ def test_the_three_edge_types_are_visually_distinct():
 
     # curvature: bidirected bends, the co-path is straight
     assert "to[bend left=30]" in tex
-    assert "(y_f) -- " in tex or "(y_m) -- " in tex
+    assert "(y_p) -- " in tex or "(y_m) -- " in tex
 
 
 def test_all_three_edge_kinds_are_actually_emitted():
@@ -123,11 +123,11 @@ def test_variance_is_a_self_loop_and_can_be_suppressed():
 def test_several_copaths_on_one_couple_stay_separable():
     """Cross-trait assortment: two co-paths between the same pair must not overlap."""
     model = pm.Model()
-    model.add_vars("S_m", "S_f")
+    model.add_vars("S_m", "S_p")
     model.add_variance("S_m", "V")
-    model.add_variance("S_f", "V")
-    model.add_copath("S_m", "S_f", "mu", process="couple")
-    model.add_copath("S_m", "S_f", "mu_prime", process="other")
+    model.add_variance("S_p", "V")
+    model.add_copath("S_m", "S_p", "mu", process="couple")
+    model.add_copath("S_m", "S_p", "mu_prime", process="other")
     tex = to_tikz(model)
     copath_lines = [line for line in tex.splitlines() if "pmCopath," in line]
     assert len(copath_lines) == 2
@@ -193,7 +193,7 @@ def test_layered_layout_puts_parents_above_children():
     model = three_edge_model()
     layout = layered_layout(model)
     assert layout["g_m"][1] > layout["y_m"][1]
-    assert layout["g_f"][1] > layout["y_f"][1]
+    assert layout["g_p"][1] > layout["y_p"][1]
 
 
 def test_layered_layout_handles_a_cyclic_model():
@@ -210,10 +210,10 @@ def test_layered_layout_handles_a_cyclic_model():
 
 
 def test_pedigree_layout_places_generations_as_rows():
-    layout = pedigree_layout({"y_m": 0, "y_f": 0, "y_o": 1})
-    assert layout["y_m"][1] == layout["y_f"][1]
+    layout = pedigree_layout({"y_m": 0, "y_p": 0, "y_o": 1})
+    assert layout["y_m"][1] == layout["y_p"][1]
     assert layout["y_o"][1] < layout["y_m"][1]
-    assert layout["y_m"][0] != layout["y_f"][0]
+    assert layout["y_m"][0] != layout["y_p"][0]
 
 
 @pytest.mark.parametrize("name", sorted(all_models()))
@@ -249,7 +249,7 @@ def test_highlight_sets_come_from_the_chain():
     directed, bidirected, copaths = highlight_sets(chain)
     assert directed
     assert bidirected
-    assert copaths == {frozenset({"y_m", "y_f"})}
+    assert copaths == {frozenset({"y_m", "y_p"})}
 
 
 def test_highlighting_emphasises_the_chain_and_fades_the_rest():
@@ -338,7 +338,7 @@ def test_portable_style_uses_only_built_in_arrow_tips():
 
 
 def test_standalone_page_is_sized_to_the_drawing():
-    source = to_standalone(three_edge_model(), layout=Layout({"g_m": (0, 0), "y_f": (12, -9)}))
+    source = to_standalone(three_edge_model(), layout=Layout({"g_m": (0, 0), "y_p": (12, -9)}))
     assert "paperwidth=" in source and "paperheight=" in source
 
 
@@ -444,7 +444,7 @@ def test_a_style_flag_never_suppresses_a_highlighted_edge():
 
     motif = allele_motif(n_variants=1)
     chain = pm.WrightTracer(motif.model).trace(
-        motif.z("m", "mat", 0), motif.z("f", "mat", 0)
+        motif.z("m", "mat", 0), motif.z("p", "mat", 0)
     ).chains[0]
     tidy = DiagramStyle(show_variances=False)
 
@@ -581,7 +581,7 @@ def test_highlight_caption_shows_the_product_being_formed():
 
     motif = allele_motif(n_variants=1)
     chain = pm.WrightTracer(motif.model).trace(
-        motif.z("m", "mat", 0), motif.z("f", "mat", 0)
+        motif.z("m", "mat", 0), motif.z("p", "mat", 0)
     ).chains[0]
 
     product = chain.tex_factors()
@@ -611,14 +611,14 @@ def test_the_highlighted_allele_figure_compiles_with_its_two_line_caption(tmp_pa
 
     motif = allele_motif(n_variants=1)
     chain = pm.WrightTracer(motif.model).trace(
-        motif.z("m", "mat", 0), motif.z("f", "mat", 0)
+        motif.z("m", "mat", 0), motif.z("p", "mat", 0)
     ).chains[0]
     out = write_pdf(
         motif.model,
         tmp_path / "chain.pdf",
         style=DiagramStyle(show_variances=False),
         highlight=chain,
-        caption_name=r"\operatorname{Cov}\left[z^{(m)}_{m}, z^{(m)}_{f}\right]",
+        caption_name=r"\operatorname{Cov}\left[z^{(m)}_{m}, z^{(m)}_{p}\right]",
     )
     assert out.exists() and out.stat().st_size > 1000
 
@@ -691,7 +691,7 @@ def test_routing_is_a_no_op_when_nothing_crosses():
 
     model = three_edge_model()
     layout = Layout({"g_m": (0, 0), "e_m": (1.7, 0), "y_m": (0.85, -1.9),
-                     "g_f": (5.1, 0), "e_f": (6.8, 0), "y_f": (5.95, -1.9)})
+                     "g_p": (5.1, 0), "e_p": (6.8, 0), "y_p": (5.95, -1.9)})
     assert route_edges(model, layout, DiagramStyle()) == {}
     tex = to_tikz(model, layout=layout)
     # every DIRECTED edge stays a plain straight `--`. (Bidirected edges always use `to[bend]`;

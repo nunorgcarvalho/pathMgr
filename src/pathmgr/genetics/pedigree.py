@@ -21,7 +21,7 @@ between ``g`` and ``e`` -- only holds while those are root nodes, which stops be
 generation 1 onward.
 
 **The co-path coefficient is generation-indexed**: ``mu_t = rho_y / V_P(t)``, because
-``Cov[y_m, y_f] = mu V_P^2`` and ``V_P`` grows every generation under assortment. Holding ``mu``
+``Cov[y_m, y_p] = mu V_P^2`` and ``V_P`` grows every generation under assortment. Holding ``mu``
 fixed instead of ``rho_y`` is a *different model*; Sunde et al. 2024 (Supp. Note 2.1) hold
 ``rho_y`` constant and note the choice is open, so :class:`AMParameters` makes it an explicit
 option rather than an accident.
@@ -87,31 +87,31 @@ class Individual:
 
     key: str
     generation: int
-    mother: str | None = None
-    father: str | None = None
+    maternal: str | None = None
+    paternal: str | None = None
     #: a short human tag for diagrams and error messages, e.g. "child of the founding couple"
     role: str = ""
 
     @property
     def is_founder(self) -> bool:
-        return self.mother is None and self.father is None
+        return self.maternal is None and self.paternal is None
 
     @property
     def parents(self) -> tuple[str, ...]:
-        return tuple(p for p in (self.mother, self.father) if p is not None)
+        return tuple(p for p in (self.maternal, self.paternal) if p is not None)
 
 
 @dataclass(frozen=True)
 class Couple:
     """A mating pair. ``generation`` is the PARENTS' generation, which is the index that matters."""
 
-    mother: str
-    father: str
+    maternal: str
+    paternal: str
     generation: int
 
     @property
     def key(self) -> str:
-        return f"couple_{self.mother}_{self.father}"
+        return f"couple_{self.maternal}_{self.paternal}"
 
 
 @dataclass
@@ -122,22 +122,22 @@ class Pedigree:
     couples: list[Couple] = field(default_factory=list)
 
     # -- construction ------------------------------------------------------------------
-    def add(self, key: str, generation: int, mother=None, father=None, role="") -> str:
+    def add(self, key: str, generation: int, maternal=None, paternal=None, role="") -> str:
         if key in self.individuals:
             raise ValueError(f"individual {key!r} already in the pedigree")
-        self.individuals[key] = Individual(key, generation, mother, father, role)
+        self.individuals[key] = Individual(key, generation, maternal, paternal, role)
         return key
 
-    def mate(self, mother: str, father: str) -> Couple:
-        for who in (mother, father):
+    def mate(self, maternal: str, paternal: str) -> Couple:
+        for who in (maternal, paternal):
             if who not in self.individuals:
                 raise KeyError(f"unknown individual {who!r}")
-        generation = self.individuals[mother].generation
-        if self.individuals[father].generation != generation:
+        generation = self.individuals[maternal].generation
+        if self.individuals[paternal].generation != generation:
             raise ValueError(
-                f"{mother!r} and {father!r} are in different generations; a couple spans one"
+                f"{maternal!r} and {paternal!r} are in different generations; a couple spans one"
             )
-        couple = Couple(mother, father, generation)
+        couple = Couple(maternal, paternal, generation)
         self.couples.append(couple)
         return couple
 
@@ -153,16 +153,16 @@ class Pedigree:
         return tuple(
             k
             for k, i in self.individuals.items()
-            if i.mother == couple.mother and i.father == couple.father
+            if i.maternal == couple.maternal and i.paternal == couple.paternal
         )
 
     def partners_of(self, who: str) -> tuple[str, ...]:
         out = []
         for couple in self.couples:
-            if couple.mother == who:
-                out.append(couple.father)
-            elif couple.father == who:
-                out.append(couple.mother)
+            if couple.maternal == who:
+                out.append(couple.paternal)
+            elif couple.paternal == who:
+                out.append(couple.maternal)
         return tuple(out)
 
     def ancestors_of(self, who: str) -> set[str]:
@@ -274,7 +274,7 @@ class Pedigree:
             lines.append(f"  generation {t}: {', '.join(members)}")
         for couple in self.couples:
             children = ", ".join(sorted(self.children_of(couple))) or "-"
-            lines.append(f"  {couple.mother} x {couple.father} (gen {couple.generation}) -> {children}")
+            lines.append(f"  {couple.maternal} x {couple.paternal} (gen {couple.generation}) -> {children}")
         return "\n".join(lines)
 
 
@@ -318,15 +318,15 @@ def am_pedigree(
         counters[generation] = index + 1
         return f"i{generation}_{index}"
 
-    mother = pedigree.add(new_key(0), 0, role="founder")
-    father = pedigree.add(new_key(0), 0, role="founder")
-    active = [pedigree.mate(mother, father)]
+    maternal = pedigree.add(new_key(0), 0, role="founder")
+    paternal = pedigree.add(new_key(0), 0, role="founder")
+    active = [pedigree.mate(maternal, paternal)]
 
     for t in range(1, n_generations + 1):
         next_active: list[Couple] = []
         for couple in active:
             children = [
-                pedigree.add(new_key(t), t, couple.mother, couple.father, role="child")
+                pedigree.add(new_key(t), t, couple.maternal, couple.paternal, role="child")
                 for _ in range(children_per_couple)
             ]
             if t < n_generations:
@@ -347,8 +347,8 @@ def am_pedigree(
         pedigree.add(
             new_key(half_sib_at + 1),
             half_sib_at + 1,
-            couple.mother,
-            couple.father,
+            couple.maternal,
+            couple.paternal,
             role="half sibling",
         )
     return pedigree
@@ -566,18 +566,18 @@ def g_level_model(
             # an outside partner joining at generation t comes from that generation's population
             model.add_variance(f"g_{key}", V_A[t])
         else:
-            # transmission: g_o = (g_m + g_f)/2 + s_o, with V_K held constant
+            # transmission: g_o = (g_m + g_p)/2 + s_o, with V_K held constant
             model.add_var(f"s_{key}", latent=True, label=f"$s_{{{key[1:]}}}$")
             model.add_variance(f"s_{key}", V_K)
-            model.add_path(f"g_{person.mother}", f"g_{key}", sp.Rational(1, 2))
-            model.add_path(f"g_{person.father}", f"g_{key}", sp.Rational(1, 2))
+            model.add_path(f"g_{person.maternal}", f"g_{key}", sp.Rational(1, 2))
+            model.add_path(f"g_{person.paternal}", f"g_{key}", sp.Rational(1, 2))
             model.add_path(f"s_{key}", f"g_{key}", 1)
 
     # THE ONLY cross-couple statement: one co-path per couple, at that couple's generation
     for couple in pedigree.couples:
         model.add_copath(
-            f"y_{couple.mother}",
-            f"y_{couple.father}",
+            f"y_{couple.maternal}",
+            f"y_{couple.paternal}",
             mu[couple.generation],
             process=couple.key,
         )
