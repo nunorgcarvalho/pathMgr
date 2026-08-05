@@ -29,6 +29,6 @@
   \draw[pmDirected, draw=pmCBBBBBB] (e_p) -- (y_p);
   \draw[pmBidirected, draw=pmC1F77B4, line width=1.82pt] (z_mat_m) to[loop above, looseness=6, in=120, out=60] node[pmLabel, text=pmC1F77B4] {$\frac{1}{2}$} (z_mat_m);
   \draw[pmBidirected, draw=pmC1F77B4, line width=1.82pt] (z_mat_p) to[loop above, looseness=6, in=120, out=60] node[pmLabel, text=pmC1F77B4] {$\frac{1}{2}$} (z_mat_p);
-  \draw[pmCopath, draw=pmC1F77B4, line width=4.16pt] (y_m) -- node[pmLabel, text=pmC1F77B4] {$\frac{\rho_{y}}{V_{E} + \beta^{2}}$} (y_p);
+  \draw[pmCopath, draw=pmC1F77B4, line width=4.16pt] (y_m) -- node[pmLabel, text=pmC1F77B4] {$\left[\rho_{y}\right]$} (y_p);
   \node[align=center] at (3.800,-3.350) {$z^{(m)}_{m} \leftrightarrow z^{(m)}_{m} \rightarrow g_m \rightarrow y_m \;\text{---}\; y_p \leftarrow g_p \leftarrow z^{(m)}_{p} \leftrightarrow z^{(m)}_{p}$\\$\operatorname{Cov}\left[z^{(m)}_{m}, z^{(m)}_{p}\right] = \frac{1}{2} \cdot \beta \cdot \frac{\rho_{y}}{V_{E} + \beta^{2}} \cdot \beta \cdot \frac{1}{2} = \frac{\beta^{2} \rho_{y}}{4 \left(V_{E} + \beta^{2}\right)}$};
 \end{tikzpicture}

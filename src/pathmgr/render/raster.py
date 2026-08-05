@@ -269,7 +269,7 @@ def draw_on_axes(
         )
         draw_label(
             (copath.a, copath.b),
-            style.edge_label((copath.a, copath.b), copath.coefficient),
+            style.copath_label(copath),
             is_hot,
             fallback=_arc_midpoint(start, end, rad),
         )

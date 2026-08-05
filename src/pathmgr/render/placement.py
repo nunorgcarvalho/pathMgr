@@ -305,7 +305,7 @@ def labelled_edges(model: Model, style: DiagramStyle) -> list[tuple[tuple[str, s
         pair = frozenset((copath.a, copath.b))
         index = seen.get(pair, 0)
         seen[pair] = index + 1
-        text = style.edge_label((copath.a, copath.b), copath.coefficient)
+        text = style.copath_label(copath)
         if text:
             out.append(((copath.a, copath.b), text, -0.12 * index))
     return out

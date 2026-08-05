@@ -17,6 +17,7 @@ import pytest
 import sympy as sp
 
 import pathmgr as pm
+from pathmgr.core.model import CoPathVarianceError
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -692,3 +693,113 @@ def test_removing_a_missing_copath_is_a_clear_error():
     m = pm.Model().add_vars("a", "b")
     with pytest.raises(KeyError, match="no co-path between"):
         m.remove_copath("a", "b")
+
+
+# ======================================================================================
+# co-paths declared by the correlation they induce (task-20260805-161348)
+# ======================================================================================
+def standardized_pair() -> pm.Model:
+    """``mated_pair`` with the co-path declared by correlation instead of by raw ``mu``."""
+    m = pm.Model("standardized mated pair", units=pm.Units.unstandardized())
+    for v in ("V_A", "V_E"):
+        m.declare(v, positive=True)
+    V_A, V_E, rho_y = (m.sym(s) for s in ("V_A", "V_E", "rho_y"))
+    for i in ("m", "p"):
+        m.add_var(f"g_{i}", latent=True)
+        m.add_var(f"e_{i}", latent=True)
+        m.add_var(f"y_{i}")
+        m.add_path(f"g_{i}", f"y_{i}", 1)
+        m.add_path(f"e_{i}", f"y_{i}", 1)
+        m.add_variance(f"g_{i}", V_A)
+        m.add_variance(f"e_{i}", V_E)
+    m.add_copath("y_m", "y_p", correlation=rho_y)
+    return m
+
+
+@pytest.mark.parametrize("engine", ["ram", "tracer"])
+def test_a_declared_correlation_is_the_correlation(engine):
+    """The whole point: the caller writes rho_y and never writes V_P anywhere."""
+    m = standardized_pair()
+    V_A, V_E, rho_y, V_P, rho_g = _pair_symbols(m)
+    engine_obj = pm.RAMEngine(m) if engine == "ram" else pm.WrightTracer(m)
+
+    assert sp.simplify(engine_obj.cov("y_m", "y_p") - rho_y * V_P) == 0
+    assert sp.simplify(engine_obj.cov("g_m", "g_p") - rho_g * V_A) == 0
+    # and the correlation really is rho_y, not rho_y scaled by anything
+    assert sp.simplify(pm.RAMEngine(m).corr("y_m", "y_p") - rho_y) == 0
+
+
+def test_declaring_by_correlation_matches_declaring_the_equivalent_mu():
+    """The two forms are the same model, stated two ways."""
+    standardized, raw = standardized_pair(), mated_pair()
+    e_std, e_raw = pm.RAMEngine(standardized), pm.RAMEngine(raw)
+    for x, y in [("y_m", "y_p"), ("g_m", "g_p"), ("e_m", "g_p"), ("e_m", "e_p")]:
+        assert sp.simplify(e_std.cov(x, y) - e_raw.cov(x, y)) == 0, (x, y)
+
+
+def test_no_radicals_survive_when_the_endpoints_share_a_variance():
+    """``rho/(sqrt(V)*sqrt(V))`` would be correct and unusable; it must come out as ``rho/V``."""
+    m = standardized_pair()
+    got = pm.RAMEngine(m).cov("y_m", "y_p")
+    assert not got.atoms(sp.Pow).intersection(
+        {p for p in got.atoms(sp.Pow) if p.exp.is_Rational and p.exp.q != 1}
+    ), f"radical survived: {got}"
+
+
+def test_the_declared_form_round_trips_through_text():
+    """Serializing the resolved mu instead would silently convert the model to the raw form."""
+    m = pm.from_text(
+        "positive: V\na ~~ V*a\nb ~~ V*b\na -- [rho]*b",
+        name="standardized",
+    )
+    assert m.copaths[0].is_standardized
+    line = [ln for ln in m.to_text().splitlines() if "--" in ln][0]
+    assert "[rho]" in line, line
+    back = pm.from_text(m.to_text())
+    assert back.copaths[0].is_standardized
+    assert sp.simplify(pm.RAMEngine(back).cov("a", "b") - pm.RAMEngine(m).cov("a", "b")) == 0
+
+
+def test_giving_both_forms_is_rejected():
+    m = pm.Model().add_vars("a", "b")
+    with pytest.raises(ValueError, match="exactly one"):
+        m.add_copath("a", "b", "mu", correlation="rho")
+    with pytest.raises(ValueError, match="exactly one"):
+        m.add_copath("a", "b")
+
+
+@pytest.mark.parametrize("engine", ["ram", "tracer"])
+def test_a_correlation_is_refused_when_another_copath_moves_the_variance(engine):
+    """The mistake this project made while implementing the feature, now impossible to repeat.
+
+    A co-path does not change the variance of the variables it matches -- but it DOES change the
+    variance of their descendants, which is the entire content of the AM dynamics. So a second
+    co-path downstream cannot be resolved from co-path-free variances, and must say so rather than
+    return a number understated by the accumulated assortment gain.
+    """
+    m = pm.from_text(
+        """
+        positive: V
+        a ~~ V*a
+        b ~~ V*b
+        c ~ 0.5*a + 0.5*b
+        d ~~ V*d
+        a -- [rho]*b
+        c -- [rho]*d
+        """
+    )
+    engine_obj = pm.RAMEngine(m) if engine == "ram" else pm.WrightTracer(m)
+    with pytest.raises(CoPathVarianceError, match="cannot be resolved"):
+        engine_obj.cov("a", "b")
+
+
+def test_the_pedigree_still_uses_raw_mu_and_says_why():
+    """Guards the revert: if the pedigree ever switches to correlations, the guard must go first."""
+    from pathmgr.genetics import am_pedigree, g_level_model
+
+    unrolled = g_level_model(am_pedigree(2, children_per_couple=2, breeding_children=1))
+    assert unrolled.model.copaths, "no co-paths in the pedigree"
+    assert not any(c.is_standardized for c in unrolled.model.copaths), (
+        "the pedigree declared a co-path by correlation, which CoPathVarianceError says cannot "
+        "be resolved there yet -- see the comment in g_level_model"
+    )

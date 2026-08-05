@@ -26,5 +26,5 @@
   \draw[pmDirected, draw=black] (e_m) -- (y_m);
   \draw[pmDirected, draw=black] (g_p) -- (y_p);
   \draw[pmDirected, draw=black] (e_p) -- (y_p);
-  \draw[pmCopath, draw=pmCB03A2E] (y_m) -- node[pmLabel] {$\frac{\rho_{y}}{V_{E} + \beta^{2}}$} (y_p);
+  \draw[pmCopath, draw=pmCB03A2E] (y_m) -- node[pmLabel] {$\left[\rho_{y}\right]$} (y_p);
 \end{tikzpicture}

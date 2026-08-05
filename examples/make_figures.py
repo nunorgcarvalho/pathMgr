@@ -44,7 +44,7 @@ def mated_pair() -> tuple[pm.Model, Layout]:
         e_m ~~ V_E*e_m
         g_p ~~ V_A*g_p
         e_p ~~ V_E*e_p
-        y_m -- (rho_y/(V_A + V_E))*y_p
+        y_m -- [rho_y]*y_p
         """,
         name="mated pair",
     )
@@ -87,7 +87,7 @@ def allele_level_pair() -> tuple[pm.Model, Layout]:
         z_pat_p ~~ 1/2*z_pat_p
         e_m ~~ V_E*e_m
         e_p ~~ V_E*e_p
-        y_m -- (rho_y/(beta**2 + V_E))*y_p
+        y_m -- [rho_y]*y_p
         """,
         name="allele level",
     )

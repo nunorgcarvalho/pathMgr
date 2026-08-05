@@ -290,6 +290,22 @@ def _imported_models() -> dict[str, pm.Model]:
         "co-path mated pair": mated_pair(),
         "co-path allele level": allele_level_pair(),
         "co-path shared partner": shared_partner(),
+        # the same mated pair declared by CORRELATION rather than raw mu -- so the agreement
+        # sweep covers the resolution path, not just the raw one
+        "co-path mated pair (standardized)": pm.from_text(
+            """
+            latent: g_m, e_m, g_p, e_p
+            positive: V_A, V_E
+            y_m ~ g_m + e_m
+            y_p ~ g_p + e_p
+            g_m ~~ V_A*g_m
+            e_m ~~ V_E*e_m
+            g_p ~~ V_A*g_p
+            e_p ~~ V_E*e_p
+            y_m -- [rho_y]*y_p
+            """,
+            name="mated pair (standardized co-path)",
+        ),
         "co-path AM example": pm.from_text(
             (root / "examples" / "am_equilibrium.pmg").read_text(), name="AM co-path"
         ),

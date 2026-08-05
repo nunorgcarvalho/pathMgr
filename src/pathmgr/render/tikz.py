@@ -236,7 +236,7 @@ def to_tikz(
         options = _edge_options(
             "pmCopath", style.copath_colour, style, hot, highlighting, colours
         )
-        label = style.edge_label((copath.a, copath.b), copath.coefficient)
+        label = style.copath_label(copath)
         node = _label_node(
             label, style, hot, highlighting, colours,
             placements.get((copath.a, copath.b)), _direction(layout, copath.a, copath.b),

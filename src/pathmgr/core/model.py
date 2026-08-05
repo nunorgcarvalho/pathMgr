@@ -92,15 +92,92 @@ class CoPath:
     multiple co-path coefficients stemming from the same mating process"). One couple may carry
     several co-paths -- Sunde use four per mating process for cross-trait assortment -- which is
     why the process is named separately from the endpoints.
+
+    **Two ways to state the strength, and the second is the one to use.** ``coefficient`` is the
+    raw ``mu`` above. ``correlation`` instead states the correlation the matching produces, and
+    ``mu`` is then derived by the engines from the model's own variances, as
+    ``mu = rho / (sd_a * sd_b)``. Exactly one of the two is set.
+
+    Prefer ``correlation``. Matching fixes a correlation, not a covariance-density, and writing
+    ``mu`` by hand is how the generation-indexing mistake happens: under assortment ``V_P`` grows
+    every generation, so a hand-written ``mu`` is right for exactly one generation and silently
+    wrong for the next. Derived ``mu`` cannot drift, because it is recomputed against whatever the
+    variances actually are.
+
+    Note this is **not** the same as a standardized *model* (:class:`~pathmgr.core.units.Units`),
+    which restates every variable on a unit-variance scale. This is one edge declared on the
+    correlation scale inside a model that is otherwise unstandardized.
     """
 
     a: str
     b: str
-    coefficient: sp.Expr
+    coefficient: sp.Expr | None
     process: str
+    #: set instead of ``coefficient`` when the co-path was declared by the correlation it induces
+    correlation: sp.Expr | None = None
+
+    @property
+    def is_standardized(self) -> bool:
+        """True when this co-path was declared by correlation rather than by raw ``mu``."""
+        return self.correlation is not None
+
+    @property
+    def declared(self) -> sp.Expr:
+        """Whatever the user actually wrote -- for display and round-tripping, never for maths."""
+        return self.correlation if self.is_standardized else self.coefficient
 
     def __str__(self) -> str:
-        return f"{self.a} -- {self.b}  [{self.coefficient}]  (process {self.process})"
+        shown = f"[{self.declared}]" if self.is_standardized else f"{self.declared}"
+        return f"{self.a} -- {self.b}  ({shown})  (process {self.process})"
+
+
+class CoPathVarianceError(ValueError):
+    """A declared correlation cannot be resolved, because its endpoints' variances are not known.
+
+    Resolving ``mu = rho / (sd_a * sd_b)`` needs the endpoints' **true** variances. Engines take
+    them from the co-path-free ``Sigma``, which is right exactly when no *other* co-path changes
+    them -- and that is not always so.
+
+    A co-path does not change the variance of the variables it matches: the contribution to
+    ``Var[a]`` would be ``sigma0[a,a] * mu * sigma0[b,a]``, and ``sigma0[b,a]`` is zero for two
+    people who are unrelated before assortment. That is Sunde's "induces covariance without
+    causing variance", and it holds.
+
+    It does **not** extend to their descendants, and assuming it did is a mistake this project
+    made and caught here. Assortment raises the offspring generation's genetic variance -- that is
+    the entire content of the AM dynamics -- so a co-path in one generation changes the variances
+    that a co-path in the *next* generation must be resolved against. Resolving both from the
+    co-path-free ``Sigma`` silently understates the later ones.
+
+    So a declared correlation is currently supported only where the endpoints' variances are
+    co-path-free. Anything else raises this, rather than returning a number that is quietly wrong
+    by the accumulated assortment gain.
+    """
+
+
+def copath_mu(copath: "CoPath", var_a: sp.Expr, var_b: sp.Expr) -> sp.Expr:
+    """The ``mu`` an engine should use for ``copath``, given its endpoints' variances.
+
+    Defined here, once, so the two engines cannot disagree about what a declared correlation
+    *means* -- they still compute ``var_a`` and ``var_b`` independently, which is the part the
+    agreement property is actually testing.
+
+    From ``Cov[a,b] = mu * Var[a] * Var[b]`` and ``Corr = Cov / (sd_a * sd_b)``,
+    ``mu = rho / (sd_a * sd_b)``.
+
+    The equal-variance branch is not an optimisation, it is the difference between a usable
+    expression and an unusable one: ``rho / (sqrt(V)*sqrt(V))`` leaves radicals that ``simplify``
+    will not clear without being told the symbols are positive, and every co-path in practice
+    joins two variables of the same variance.
+
+    **The caller is responsible for passing the right variances**, which is harder than it looks
+    -- see :class:`CoPathVarianceError`.
+    """
+    if not copath.is_standardized:
+        return copath.coefficient
+    if var_a == var_b or sp.simplify(var_a - var_b) == 0:
+        return sp.together(copath.correlation / var_a)
+    return sp.together(copath.correlation / (sp.sqrt(var_a) * sp.sqrt(var_b)))
 
 
 @dataclass
@@ -220,15 +297,41 @@ class Model:
         """Shorthand for ``add_cov(name, name, value)``."""
         return self.add_cov(name, name, value)
 
-    def add_copath(self, a: str, b: str, coefficient, process: str | None = None) -> "Model":
+    def add_copath(
+        self,
+        a: str,
+        b: str,
+        coefficient=None,
+        process: str | None = None,
+        *,
+        correlation=None,
+    ) -> "Model":
         """Add a co-path ``a -- b``: covariance from **matching**, not from a common cause.
 
-        See :class:`CoPath`. ``coefficient`` is not the correlation -- for variables of variance
-        ``V`` a target correlation ``rho`` needs ``rho / V``. ``process`` names the mating
-        process; it defaults to the pair itself, which is right unless one couple carries
-        several co-paths (cross-trait assortment), in which case name it explicitly so the
-        "one co-path per mating process per chain" rule can see they belong together.
+        Give exactly one of:
+
+        - ``correlation`` -- **preferred**. The correlation the matching induces between ``a`` and
+          ``b``. The engines derive ``mu = rho / (sd_a * sd_b)`` from the model's own variances,
+          so it stays right as those variances change from generation to generation.
+        - ``coefficient`` -- the raw ``mu`` of Sunde's Eq. (1), where
+          ``Cov[a, b] = mu * Var[a] * Var[b]``. This is *not* the correlation: for variables of
+          variance ``V`` a target correlation ``rho`` needs ``rho / V``, and under assortment
+          ``V`` moves every generation. Kept because it is the primitive the maths is defined on,
+          but writing it by hand is the generation-indexing trap.
+
+        ``process`` names the mating process; it defaults to the pair itself, which is right
+        unless one couple carries several co-paths (cross-trait assortment), in which case name it
+        explicitly so the "one co-path per mating process per chain" rule can see they belong
+        together.
         """
+        if (coefficient is None) == (correlation is None):
+            raise ValueError(
+                "give exactly one of coefficient= (the raw mu, where "
+                "Cov[a,b] = mu*Var[a]*Var[b]) or correlation= (the correlation the matching "
+                "induces, from which mu is derived). They are different quantities -- for "
+                "variables of variance V, correlation rho means mu = rho/V -- so passing both "
+                "would be stating the same edge twice, and neither leaves it unspecified."
+            )
         self._require(a, b)
         if a == b:
             raise ValueError(
@@ -241,9 +344,15 @@ class Model:
         if key in self._copaths:
             raise ValueError(
                 f"co-path {a!r} -- {b!r} in process {resolved!r} already specified as "
-                f"{self._copaths[key].coefficient}; remove it first"
+                f"{self._copaths[key].declared}; remove it first"
             )
-        self._copaths[key] = CoPath(first, second, self.expr(coefficient), resolved)
+        self._copaths[key] = CoPath(
+            first,
+            second,
+            None if coefficient is None else self.expr(coefficient),
+            resolved,
+            correlation=None if correlation is None else self.expr(correlation),
+        )
         self._touch()
         return self
 

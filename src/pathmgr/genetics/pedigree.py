@@ -573,7 +573,15 @@ def g_level_model(
             model.add_path(f"g_{person.paternal}", f"g_{key}", sp.Rational(1, 2))
             model.add_path(f"s_{key}", f"g_{key}", 1)
 
-    # THE ONLY cross-couple statement: one co-path per couple, at that couple's generation
+    # THE ONLY cross-couple statement: one co-path per couple, at that couple's generation.
+    #
+    # These are declared with the raw mu[t] and NOT with correlation=rho_y, even though the latter
+    # is the recommended form elsewhere and would delete the per-generation bookkeeping below.
+    # It cannot be used here yet: resolving a declared correlation needs the endpoints' true
+    # variances, and in a pedigree those depend on the co-paths of *earlier* generations --
+    # assortment raises the offspring generation's variance. See CoPathVarianceError. Making the
+    # pedigree use correlations needs the engines to resolve co-paths in dependency order, which
+    # is not implemented.
     for couple in pedigree.couples:
         model.add_copath(
             f"y_{couple.maternal}",

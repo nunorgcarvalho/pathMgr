@@ -22,5 +22,5 @@
   \draw[pmBidirected, draw=black] (e_m) to[loop above, looseness=6, in=120, out=60] node[pmLabel] {$V_{E}$} (e_m);
   \draw[pmBidirected, draw=black] (g_p) to[loop above, looseness=6, in=120, out=60] node[pmLabel] {$V_{A}$} (g_p);
   \draw[pmBidirected, draw=black] (e_p) to[loop above, looseness=6, in=120, out=60] node[pmLabel] {$V_{E}$} (e_p);
-  \draw[pmCopath, draw=pmCB03A2E] (y_m) -- node[pmLabel] {$\frac{\rho_{y}}{V_{A} + V_{E}}$} (y_p);
+  \draw[pmCopath, draw=pmCB03A2E] (y_m) -- node[pmLabel] {$\left[\rho_{y}\right]$} (y_p);
 \end{tikzpicture}

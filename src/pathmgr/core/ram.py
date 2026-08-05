@@ -57,11 +57,12 @@ from dataclasses import dataclass, field
 
 import sympy as sp
 
-from .model import Model
+from .model import CoPathVarianceError, Model, copath_mu
 from .units import Units
 
 __all__ = [
     "CoPathLimitError",
+    "CoPathVarianceError",
     "CovarianceReport",
     "CyclicModelError",
     "RAMEngine",
@@ -311,15 +312,55 @@ class RAMEngine:
         self._sigma_full = None
         self._revision = self.model.revision
 
-    def _oriented_copaths(self, index: dict[str, int]):
-        """Each co-path in both orientations, as ``(process, near, far, coefficient)``."""
+    def _oriented_copaths(self, index: dict[str, int], sigma0: sp.Matrix | None = None):
+        """Each co-path in both orientations, as ``(process, near, far, mu)``.
+
+        A co-path declared by its correlation has its ``mu`` derived here from ``sigma0``'s
+        diagonal -- the **co-path-free** variances. Two reasons that is the right source and not
+        merely a convenient one: a co-path induces covariance without causing variance, so the
+        co-path-free variance *is* the variance; and taking it from ``sigma0`` breaks what would
+        otherwise be a circular definition, since ``mu`` is needed to build the full ``Sigma``.
+        """
         oriented = []
         for copath in self.model.copaths:
-            if copath.coefficient == 0:
+            if copath.is_standardized:
+                if sigma0 is None:
+                    sigma0 = self.sigma_copath_free()
+                self._require_copath_free_variance(copath, index, sigma0)
+                mu = copath_mu(copath, sigma0[index[copath.a], index[copath.a]],
+                               sigma0[index[copath.b], index[copath.b]])
+            else:
+                mu = copath.coefficient
+            if mu == 0:
                 continue
             for a, b in sorted({(copath.a, copath.b), (copath.b, copath.a)}):
-                oriented.append((copath.process, index[a], index[b], copath.coefficient))
+                oriented.append((copath.process, index[a], index[b], mu))
         return oriented
+
+    def _require_copath_free_variance(self, copath, index, sigma0) -> None:
+        """Refuse to resolve a declared correlation whose endpoints' variances other co-paths move.
+
+        See :class:`~pathmgr.core.model.CoPathVarianceError`. The test is deliberately
+        conservative: an endpoint ``x`` is treated as affected if it has any non-zero co-path-free
+        covariance with an endpoint of a *different* co-path, since that is what a co-path sequence
+        needs at each end in order to reach ``Var[x]``. Over-refusing costs a clear error message;
+        under-refusing costs a wrong number nobody sees.
+        """
+        for endpoint in (copath.a, copath.b):
+            here = index[endpoint]
+            for other in self.model.copaths:
+                if (other.a, other.b, other.process) == (copath.a, copath.b, copath.process):
+                    continue
+                for far in (other.a, other.b):
+                    if sigma0[here, index[far]] != 0:
+                        raise CoPathVarianceError(
+                            f"co-path {copath.a!r} -- {copath.b!r} is declared by correlation, but "
+                            f"{endpoint!r} is already correlated with {far!r} before assortment, "
+                            f"so the co-path {other.a!r} -- {other.b!r} changes Var[{endpoint}] "
+                            f"and the correlation cannot be resolved from the co-path-free "
+                            f"variances. Give this co-path an explicit coefficient= (raw mu) "
+                            f"instead. See CoPathVarianceError."
+                        )
 
     def _copath_entry(self, row: int, column: int) -> sp.Expr:
         """One entry of Sigma, without materialising the whole matrix.
@@ -335,7 +376,7 @@ class RAMEngine:
         a five-generation unroll take minutes. Asking for one covariance is the common case.
         """
         sigma0 = self.sigma_copath_free()
-        oriented = self._oriented_copaths(self._index)
+        oriented = self._oriented_copaths(self._index, sigma0)
         total = sigma0[row, column]
         if not oriented:
             return total
@@ -408,12 +449,7 @@ class RAMEngine:
         hence the explicit enumeration and the :class:`CoPathLimitError` guard.
         """
         index = self._index
-        oriented: list[tuple[str, int, int, sp.Expr]] = []
-        for copath in self.model.copaths:
-            if copath.coefficient == 0:
-                continue
-            for a, b in sorted({(copath.a, copath.b), (copath.b, copath.a)}):
-                oriented.append((copath.process, index[a], index[b], copath.coefficient))
+        oriented = self._oriented_copaths(index, sigma0)
         if not oriented:
             return sigma0
 

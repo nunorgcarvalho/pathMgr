@@ -167,6 +167,26 @@ def from_text(text: str, name: str | None = None) -> Model:
         for term in _split_terms(rhs, lineno, line):
             coeff_text, var_name = _split_term(term, lineno, line)
             _ensure_var(model, var_name, latent, labels)
+            # [rho] on a co-path term means "this is the CORRELATION, not the raw mu". It cannot
+            # be confused with the trailing [process], because _PROCESS_RE is anchored to the end
+            # of the line and this bracket is attached to a term.
+            standardized = False
+            if op == "--" and coeff_text is not None:
+                # _split_term hands back a sign-prefixed, parenthesised coefficient
+                # ('-([rho_y])'), so peel those off before looking for the marker.
+                sign, rest = "", coeff_text.strip()
+                if rest.startswith("-"):
+                    sign, rest = "-", rest[1:].strip()
+                if rest.startswith("(") and rest.endswith(")"):
+                    rest = rest[1:-1].strip()
+                if rest.startswith("[") and rest.endswith("]"):
+                    standardized = True
+                    inner = rest[1:-1].strip()
+                    if not inner:
+                        raise TextSyntaxError(
+                            lineno, line, "empty standardized coefficient in [...]"
+                        )
+                    coeff_text = f"{sign}({inner})"
             try:
                 coeff = model.expr(coeff_text) if coeff_text is not None else sp.Integer(1)
             except (SyntaxError, TypeError, sp.SympifyError) as exc:
@@ -179,6 +199,8 @@ def from_text(text: str, name: str | None = None) -> Model:
                     model.add_path(var_name, lhs, coeff)
                 elif op == "~~":
                     model.add_cov(lhs, var_name, coeff)
+                elif standardized:
+                    model.add_copath(lhs, var_name, correlation=coeff, process=process)
                 else:
                     model.add_copath(lhs, var_name, coeff, process=process)
             except ValueError as exc:
@@ -393,7 +415,7 @@ def to_text(model: Model, include_name: bool = True) -> str:
             default = f"{copath.a}--{copath.b}"
             suffix = "" if copath.process == default else f" [{copath.process}]"
             lines.append(
-                f"{copath.a} -- " + _term_text(copath.coefficient, copath.b) + suffix
+                f"{copath.a} -- " + _copath_term_text(copath) + suffix
             )
 
     if model.assumptions:
@@ -406,6 +428,18 @@ def to_text(model: Model, include_name: bool = True) -> str:
 
 def _units_text(units: Units) -> str:
     return f"standardized to {units.reference}" if units.is_standardized else "unstandardized"
+
+
+def _copath_term_text(copath) -> str:
+    """A co-path's right-hand side, preserving how it was declared.
+
+    A model written with a correlation must come back as a correlation: serializing the resolved
+    ``mu`` instead would silently convert it to the raw form, and the round trip would then produce
+    a model that is only correct for the variances it happened to be resolved against.
+    """
+    if not copath.is_standardized:
+        return _term_text(copath.coefficient, copath.b)
+    return f"[{sp.sstr(copath.correlation)}]*{copath.b}"
 
 
 def _term_text(coeff: sp.Expr, var_name: str) -> str:

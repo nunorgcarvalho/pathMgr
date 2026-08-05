@@ -163,6 +163,25 @@ class DiagramStyle:
             return self.label_overrides[reversed_key]
         return coefficient_label(value, omit_unit=not self.show_unit_coefficients)
 
+    def copath_label(self, copath) -> str:
+        """LaTeX math for a co-path's label, bracketed when it is a **correlation**.
+
+        The bracket is not decoration. A co-path carries one of two different quantities -- a raw
+        ``mu``, where ``Cov = mu*Var[a]*Var[b]``, or the correlation it induces -- and they differ
+        by a factor of the variances. A reader looking at ``\\rho_y`` on an edge cannot otherwise
+        tell which they are being shown, and the two are numerically equal only when the
+        endpoints have unit variance. ``[\\rho_y]`` reads "on the correlation scale".
+
+        Overrides still win, as everywhere else in this class.
+        """
+        key = (copath.a, copath.b)
+        if key in self.label_overrides or (key[1], key[0]) in self.label_overrides:
+            return self.edge_label(key, copath.declared)
+        if not copath.is_standardized:
+            return self.edge_label(key, copath.coefficient)
+        inner = coefficient_label(copath.correlation, omit_unit=False)
+        return rf"\left[{inner}\right]"
+
     def node_label(self, name: str, variable_label: str | None) -> str:
         """Math-mode text for a node: an override, else ``Variable.label``, else the name.
 

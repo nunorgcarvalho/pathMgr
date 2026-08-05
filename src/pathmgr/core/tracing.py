@@ -83,7 +83,7 @@ from itertools import chain as _iterchain
 
 import sympy as sp
 
-from .model import CoPath, Model
+from .model import CoPath, CoPathVarianceError, Model, copath_mu
 from .units import Units
 
 __all__ = [
@@ -475,6 +475,8 @@ class WrightTracer:
         self.model = model
         self.max_chains = self.DEFAULT_MAX_CHAINS if max_chains is None else max_chains
         self._path_cache: dict[str, dict[str, tuple[tuple[tuple[str, ...], sp.Expr], ...]]] = {}
+        self._mu_cache: dict[tuple[str, str, str], sp.Expr] = {}
+        self._mu_cache_revision: int | None = None
         self._cached_revision: int | None = None
 
     @property
@@ -522,7 +524,8 @@ class WrightTracer:
         for copath in self.model.copaths:
             if copath.process in used_processes:
                 continue  # one co-path per mating process per chain (Supp. Note 3)
-            if copath.coefficient == 0:
+            mu = self._mu(copath)
+            if mu == 0:
                 continue
             ends = {(copath.a, copath.b), (copath.b, copath.a)}
             for near, far in sorted(ends):
@@ -532,8 +535,64 @@ class WrightTracer:
                         yield self._build(
                             [segment, *rest.segments],
                             (copath, *rest.crossings),
-                            head_factors + (copath.coefficient,) + rest.factors,
+                            head_factors + (mu,) + rest.factors,
                         )
+
+    def _mu(self, copath: CoPath) -> sp.Expr:
+        """This co-path's ``mu``, derived from co-path-free variances if declared by correlation.
+
+        Cached per ``model.revision``: it is asked for once per chain otherwise, and the equal-
+        variance test inside :func:`~pathmgr.core.model.copath_mu` calls ``simplify``.
+        """
+        if not copath.is_standardized:
+            return copath.coefficient
+        key = (copath.a, copath.b, copath.process)
+        if self._mu_cache_revision != self.model.revision:
+            self._mu_cache = {}
+            self._mu_cache_revision = self.model.revision
+        if key not in self._mu_cache:
+            self._require_copath_free_variance(copath)
+            self._mu_cache[key] = copath_mu(
+                copath,
+                self._copath_free_cov(copath.a, copath.a),
+                self._copath_free_cov(copath.b, copath.b),
+            )
+        return self._mu_cache[key]
+
+    def _require_copath_free_variance(self, copath: CoPath) -> None:
+        """Mirror of the RAM engine's guard; see :class:`CoPathVarianceError` for the why.
+
+        Deliberately duplicated rather than shared: the two engines must reach the same verdict by
+        their own route, and this one is stated in terms of chains rather than matrix entries.
+        """
+        for endpoint in (copath.a, copath.b):
+            for other in self.model.copaths:
+                if (other.a, other.b, other.process) == (copath.a, copath.b, copath.process):
+                    continue
+                for far in (other.a, other.b):
+                    if self._copath_free_cov(endpoint, far) != 0:
+                        raise CoPathVarianceError(
+                            f"co-path {copath.a!r} -- {copath.b!r} is declared by correlation, but "
+                            f"{endpoint!r} is already correlated with {far!r} before assortment, "
+                            f"so the co-path {other.a!r} -- {other.b!r} changes Var[{endpoint}] "
+                            f"and the correlation cannot be resolved from the co-path-free "
+                            f"variances. Give this co-path an explicit coefficient= (raw mu) "
+                            f"instead. See CoPathVarianceError."
+                        )
+
+    def _copath_free_cov(self, x: str, y: str) -> sp.Expr:
+        """``Cov[x, y]`` from standard chains only -- no co-paths.
+
+        Not a shortcut for ``self.cov(x, y)``: that would recurse, since resolving a declared
+        correlation is exactly what we are in the middle of doing.
+        """
+        total = sp.Integer(0)
+        for segment in self._segments(x, y):
+            term = sp.Integer(1)
+            for factor in self._segment_factors(segment):
+                term *= factor
+            total += term
+        return sp.expand(total)
 
     def _build(self, segments, crossings, factors) -> Chain:
         return Chain(

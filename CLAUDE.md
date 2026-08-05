@@ -252,13 +252,33 @@ here). A co-path denotes covariance attributable to **matching**, inducing covar
 causing variance*.
 
 ```python
-m.add_copath("y_m", "y_p", "mu")                      # process defaults to the pair
+m.add_copath("y_m", "y_p", correlation="rho_y")       # PREFERRED: the correlation it induces
+m.add_copath("y_m", "y_p", "mu")                      # the raw mu; process defaults to the pair
 m.add_copath("S_m", "Sx_p", "mu_prime", process="couple0")   # cross-trait: same process
 ```
 ```
-y_m -- mu*y_p                    # text grammar: an arrowless line
-S_m -- mu2*Sx_p [couple0]        # [name] names the mating process
+y_m -- [rho_y]*y_p               # text grammar: BRACKETS mean "this is the correlation"
+y_m -- mu*y_p                    # unbracketed: the raw mu
+S_m -- mu2*Sx_p [couple0]        # a TRAILING [name] names the mating process
 ```
+
+**Two quantities, and they are not interchangeable.** `Cov[a,b] = mu * Var[a] * Var[b]`, so a
+target correlation `rho` needs `mu = rho / V` for endpoints of variance `V`. Write `[rho]` and the
+engines derive `mu` from the model's own variances; write `mu` and you own the arithmetic. Prefer
+`[rho]`: matching fixes a correlation, and a hand-written `mu` is right for exactly the variances
+it was computed against. Brackets are unambiguous against the trailing `[process]` because the
+process bracket is anchored to end-of-line. Diagrams render a declared correlation bracketed,
+`[\rho_y]`, so the scale is visible in the figure — this is *not* a standardized `Units` model, it
+is one edge stated on the correlation scale.
+
+**Where the correlation form cannot be used yet.** Resolving it needs the endpoints' true
+variances, taken from the co-path-free `Sigma`. That is valid only when no *other* co-path moves
+them. A co-path does not change the variance of the pair it matches (`sigma0[b,a] = 0` for two
+people unrelated before assortment — Sunde's "without causing variance"), but it **does** change
+their descendants' — that is the whole content of the AM dynamics. So the pedigree still declares
+raw `mu[t]`, and both engines raise `CoPathVarianceError` rather than return a number understated
+by the accumulated assortment gain. Lifting this needs the engines to resolve co-paths in
+dependency order.
 
 **Why it is not a bidirected edge, and cannot be emulated by one.** Matching induces correlation
 among *all the causes* of the matched variables, so the association propagates **backward** up
