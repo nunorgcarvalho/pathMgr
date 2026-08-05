@@ -54,6 +54,53 @@ def test_the_notebook_exists_and_is_committed_with_outputs():
     assert not errors, f"stored error outputs: {errors}"
 
 
+def test_no_display_mode_environment_is_wrapped_in_inline_math():
+    """``IPython.display.Math`` wraps its argument in inline ``$...$``; ``align*`` needs display mode.
+
+    KaTeX -- which JupyterLab and nbviewer use -- rejects the combination outright with
+    "{align*} can be used only in display mode", so the cell renders as a red error box for every
+    reader while executing perfectly for the author. Nothing else catches it: the notebook runs
+    clean, the test suite passes, and the failure is purely in the rendering layer.
+
+    The fix is ``display(Latex(...))``, which passes the string through at top level.
+    """
+    import re
+
+    notebook = nbformat.read(NOTEBOOK, as_version=4)
+    display_only = ("align", "align*", "gather", "gather*", "equation", "equation*", "multline")
+
+    broken = []
+    for index, cell in enumerate(notebook.cells):
+        for output in cell.get("outputs", []):
+            latex = output.get("data", {}).get("text/latex", "")
+            stripped = latex.strip()
+            inline = stripped.startswith("$") and not stripped.startswith("$$")
+            if not inline:
+                continue
+            for environment in re.findall(r"\\begin\{(\w+\*?)\}", latex):
+                if environment in display_only:
+                    broken.append((index, environment))
+    assert not broken, (
+        f"display-mode environments inside inline math: {broken}. "
+        "Use display(Latex(...)) rather than display(Math(...))."
+    )
+
+
+def test_execution_counts_are_sequential_with_no_gaps():
+    """A cell with no execution count renders as ``[ ]`` and offsets every number after it.
+
+    That makes it impossible to refer to "cell [11]" and be understood, which is a real cost for a
+    notebook meant to be read and discussed rather than only run.
+    """
+    notebook = nbformat.read(NOTEBOOK, as_version=4)
+    counts = [
+        c.execution_count
+        for c in notebook.cells
+        if c.cell_type == "code" and c.source.strip()
+    ]
+    assert counts == list(range(1, len(counts) + 1)), f"non-sequential execution counts: {counts}"
+
+
 def test_every_markdown_link_in_the_notebook_resolves():
     """Relative links break silently when files move; the layout tidy is exactly when that happens."""
     import re
