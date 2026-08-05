@@ -2,8 +2,8 @@
 \definecolor{pmCBBBBBB}{HTML}{BBBBBB}
 \begin{tikzpicture}[
   every node/.style={font=\small},
-  pmObserved/.style={draw=black, fill=white, rectangle, minimum width=0.85cm, minimum height=0.6cm, inner sep=1pt},
-  pmLatent/.style={draw=black, fill=white, ellipse, minimum width=0.85cm, minimum height=0.6cm, inner sep=1pt},
+  pmObserved/.style={draw=black, fill=white, rectangle, inner sep=0.09cm, minimum width=0.42cm, minimum height=0.34cm},
+  pmLatent/.style={draw=black, fill=white, ellipse, inner sep=0.16cm, minimum width=0.42cm, minimum height=0.34cm},
   pmDirected/.style={-{Stealth[length=2mm]}, line width=0.7pt},
   pmBidirected/.style={{Stealth[length=2mm]}-{Stealth[length=2mm]}, line width=0.7pt},
   pmCopath/.style={line width=1.6pt},
@@ -27,6 +27,8 @@
   \draw[pmDirected, draw=pmCBBBBBB] (e_m) -- (y_m);
   \draw[pmDirected, draw=pmC1F77B4, line width=1.82pt] (g_f) -- (y_f);
   \draw[pmDirected, draw=pmCBBBBBB] (e_f) -- (y_f);
+  \draw[pmBidirected, draw=pmC1F77B4, line width=1.82pt] (z_mat_m) to[loop above, looseness=6, in=120, out=60] node[pmLabel, text=pmC1F77B4] {$\frac{1}{2}$} (z_mat_m);
+  \draw[pmBidirected, draw=pmC1F77B4, line width=1.82pt] (z_mat_f) to[loop above, looseness=6, in=120, out=60] node[pmLabel, text=pmC1F77B4] {$\frac{1}{2}$} (z_mat_f);
   \draw[pmCopath, draw=pmC1F77B4, line width=4.16pt] (y_f) -- node[pmLabel, text=pmC1F77B4] {$\frac{\rho_{y}}{V_{E} + \beta^{2}}$} (y_m);
-  \node[align=center] at (3.800,-3.150) {$z^{(m)}_{m} \leftrightarrow z^{(m)}_{m} \rightarrow g_m \rightarrow y_m \;\text{---}\; y_f \leftarrow g_f \leftarrow z^{(m)}_{f} \leftrightarrow z^{(m)}_{f}$};
+  \node[align=center] at (3.800,-3.350) {$z^{(m)}_{m} \leftrightarrow z^{(m)}_{m} \rightarrow g_m \rightarrow y_m \;\text{---}\; y_f \leftarrow g_f \leftarrow z^{(m)}_{f} \leftrightarrow z^{(m)}_{f}$\\$\operatorname{Cov}\left[z^{(m)}_{m}, z^{(m)}_{f}\right] = \frac{1}{2} \cdot \beta \cdot \frac{\rho_{y}}{V_{E} + \beta^{2}} \cdot \beta \cdot \frac{1}{2} = \frac{\beta^{2} \rho_{y}}{4 \left(V_{E} + \beta^{2}\right)}$};
 \end{tikzpicture}

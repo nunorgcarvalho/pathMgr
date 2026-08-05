@@ -281,6 +281,45 @@ class Chain:
         """The chain as math-mode LaTeX, using each variable's label where it has one."""
         return self.COPATH_TEX.join(s.tex_path(labels) for s in self.segments)
 
+    def tex_factors(self, omit_unit: bool = True) -> str:
+        """The contribution as the PRODUCT being formed, before it is multiplied out.
+
+        ``\\frac{1}{2} \\cdot \\beta_{0} \\cdot \\mu \\cdot \\beta_{0} \\cdot \\frac{1}{2}`` --
+        so a figure can show the arithmetic rather than only its answer, and a reader can check it
+        against the chain edge by edge.
+
+        Unit factors are dropped by default, matching the edge labels (which also omit a
+        coefficient of 1): leaving them in gives ``\\cdot 1 \\cdot`` runs that obscure the terms
+        that matter. If every factor is 1 the product is just ``1``.
+        """
+        factors = [f for f in self.factors if not (omit_unit and f == 1)]
+        if not factors:
+            return "1"
+        rendered = []
+        for factor in factors:
+            text = sp.latex(factor)
+            if isinstance(factor, sp.Add) or (factor.is_number and factor < 0):
+                text = f"\\left({text}\\right)"
+            rendered.append(text)
+        return r" \cdot ".join(rendered)
+
+    def tex_contribution(self, factored: bool = True) -> str:
+        """``<product> = <value>`` -- the arithmetic and its result in one line."""
+        value = sp.factor(self.contribution) if factored else self.contribution
+        return f"{self.tex_factors()} = {sp.latex(value)}"
+
+    def tex_caption(self, labels: dict[str, str] | None = None, name: str | None = None) -> str:
+        """A two-line caption: the Wright chain, then the product it contributes.
+
+        ``name`` prefixes the second line, e.g. ``\\operatorname{Cov}[a, b]``, when the chain is
+        the whole covariance rather than one term of it.
+        """
+        head = self.tex_path(labels)
+        body = self.tex_contribution()
+        if name:
+            body = f"{name} = {body}"
+        return f"{head}\\\\{body}"
+
     def __str__(self) -> str:
         return f"{self.path_string()}   =  {sp.sstr(self.contribution)}"
 

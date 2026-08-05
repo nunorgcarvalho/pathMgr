@@ -181,7 +181,13 @@ def main(out: Path) -> None:
     tracer = pm.WrightTracer(allele_model)
     decomposition = tracer.trace("z_mat_m", "z_mat_f")
     chain = decomposition.chains[0]
-    emit("allele_chain_highlighted", allele_model, allele_layout, out, tidy, highlight=chain)
+    # `tidy` hides the CONTEXT variances; the chain's own z <-> z loops are drawn regardless,
+    # because they carry the 1/2 * 1/2 that produces the /4 in the result
+    name = r"\operatorname{Cov}\left[z^{(m)}_{m}, z^{(m)}_{f}\right]" if len(decomposition) == 1 else None
+    emit(
+        "allele_chain_highlighted", allele_model, allele_layout, out, tidy,
+        highlight=chain, caption_name=name,
+    )
 
     beta, V_E, rho_y = (allele_model.sym(s) for s in ("beta", "V_E", "rho_y"))
     expected = beta**2 * rho_y / (4 * (beta**2 + V_E))

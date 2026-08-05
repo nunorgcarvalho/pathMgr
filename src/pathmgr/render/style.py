@@ -23,6 +23,27 @@ import sympy as sp
 
 __all__ = ["DiagramStyle", "coefficient_label"]
 
+#: LaTeX control sequences that take up no visual width when estimating a label's size
+_MARKUP = ("\\left", "\\right", "\\tfrac", "\\frac", "\\text", "\\mathrm", "{", "}", "$", "\\,")
+
+
+def _visible_length(label: str) -> int:
+    """Roughly how many characters wide a LaTeX label prints as.
+
+    A crude estimate on purpose: it only has to be close enough to keep an edge label off a node
+    box. A control sequence like ``\\rho`` prints as one glyph, and braces print as nothing.
+    """
+    text = label
+    for token in _MARKUP:
+        text = text.replace(token, "")
+    # each remaining backslash-word is one glyph
+    parts = text.split("\\")
+    length = len(parts[0])
+    for part in parts[1:]:
+        stripped = part.lstrip("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        length += 1 + len(stripped)
+    return max(1, length)
+
 
 def coefficient_label(value: sp.Expr, omit_unit: bool = True) -> str:
     """A coefficient as LaTeX math *without* delimiters, or ``""`` to draw no label.
@@ -41,10 +62,24 @@ class DiagramStyle:
     """Everything cosmetic, in one place, shared by both back ends."""
 
     # -- node shapes ------------------------------------------------------------------
+    # Sized by their CONTENTS, not to a uniform footprint. A `minimum width/height` forces every
+    # node to the same box whatever its label, which is where padding (and crowding) comes from.
+    # These are the paddings around the typeset label; the minimums are a floor for a very short
+    # label like a single letter, not a target.
     observed_shape: str = "rectangle"
     latent_shape: str = "ellipse"
-    node_width: float = 0.85
-    node_height: float = 0.6
+    #: padding around the label inside a rectangle, in cm
+    rectangle_inset: float = 0.09
+    #: padding inside an ellipse. Larger, because an ellipse has proportionally less usable area
+    #: than its bounding box -- that is geometry, not extra padding.
+    ellipse_inset: float = 0.16
+    #: floor on node size, in cm, so a one-character label still gets a sane box
+    node_min_width: float = 0.42
+    node_min_height: float = 0.34
+    #: raster-only: nominal cm per character, used to estimate a label's width when sizing a box
+    #: before it is typeset. Only affects the raster back end; TikZ measures the real thing.
+    raster_char_width: float = 0.115
+    raster_line_height: float = 0.34
 
     # -- edge appearance --------------------------------------------------------------
     directed_width: float = 0.7
@@ -85,8 +120,20 @@ class DiagramStyle:
     #: raster-only: arrowhead size in points. Must stay legible on a large figure, so it is
     #: deliberately larger than matplotlib's default of 10.
     arrow_head_size: float = 20.0
-    #: raster-only: gap in points between a node's edge and where an arrow starts/ends
-    node_clearance: float = 15.0
+    #: extra gap in cm between a node's boundary and where an edge starts/ends. The boundary
+    #: itself is computed per node from its actual size -- a constant clearance under-shortens
+    #: for a wide ellipse and over-shortens for a small node.
+    node_clearance: float = 0.06
+
+    # -- label placement ---------------------------------------------------------------
+    #: fractions along an edge to try when the midpoint label would collide
+    label_positions: tuple[float, ...] = (0.5, 0.38, 0.62, 0.28, 0.72)
+    #: perpendicular offsets in cm to try, in order. 0 first, so simple diagrams are unchanged.
+    label_offsets: tuple[float, ...] = (0.0, 0.22, -0.22, 0.4, -0.4)
+    #: assumed label box size in cm, for collision scoring
+    label_pad: float = 0.1
+    #: set False to go back to plain midpoint placement
+    avoid_label_collisions: bool = True
 
     # -- highlighting -----------------------------------------------------------------
     #: multiply edge width by this for a highlighted edge
@@ -137,6 +184,36 @@ class DiagramStyle:
             tip not in ("->", "<->", "-", "<-")
             for tip in (self.arrow_tip_directed, self.arrow_tip_bidirected)
         )
+
+    def draws_variance(self, highlighted: bool) -> bool:
+        """Whether to draw a variance self-loop.
+
+        **A style flag governs what CONTEXT is drawn; it must never suppress an edge that is part
+        of the highlighted chain.** `show_variances=False` is for decluttering the surroundings,
+        and hiding a highlighted edge makes the figure contradict its own caption -- in the
+        allele-level chain the two `z <-> z` variances carry the `1/2 * 1/2` that produces the
+        whole `/4` in `beta^2 rho_y / (4 V_P)`, so omitting them leaves a reader tracing the chain
+        by hand off by a factor of four with nothing in the figure to explain it.
+
+        Any future filter must follow the same rule; there is a test that enumerates them.
+        """
+        return self.show_variances or highlighted
+
+    def node_size(self, label: str, latent: bool) -> tuple[float, float]:
+        """Estimated ``(width, height)`` in cm for a node holding ``label``.
+
+        Used by the raster back end, and by label-collision scoring in both. TikZ sizes its own
+        boxes from the real typeset label; this only has to be close enough to keep labels off
+        them.
+        """
+        text = _visible_length(label)
+        inset = self.ellipse_inset if latent else self.rectangle_inset
+        width = max(self.node_min_width, text * self.raster_char_width + 2 * inset)
+        height = max(self.node_min_height, self.raster_line_height + 2 * inset)
+        if latent:
+            # an ellipse must be wider than its bounding text to contain it
+            width *= 1.25
+        return (width, height)
 
     def legend_entries(self) -> tuple[tuple[str, str], ...]:
         """``(edge kind, one-line meaning)`` pairs, for a figure that spells the rules out."""

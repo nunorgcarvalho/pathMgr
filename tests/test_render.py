@@ -428,3 +428,196 @@ def test_core_import_does_not_pull_in_matplotlib():
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "clean" in result.stdout
+
+
+# ======================================================================================
+# task-20260804-205013: legibility pass, and the correctness rule behind item 1
+# ======================================================================================
+def test_a_style_flag_never_suppresses_a_highlighted_edge():
+    """CORRECTNESS. `show_variances=False` declutters the CONTEXT; it must not hide the chain.
+
+    In the allele-level chain the two `z <-> z` variances are the first and last edges and carry
+    the `1/2 * 1/2` that produces the whole `/4` in the result. Hiding them makes the figure
+    contradict its own caption and leaves a reader tracing it by hand off by a factor of four.
+    """
+    from pathmgr.genetics import allele_motif
+
+    motif = allele_motif(n_variants=1)
+    chain = pm.WrightTracer(motif.model).trace(
+        motif.z("m", "mat", 0), motif.z("f", "mat", 0)
+    ).chains[0]
+    tidy = DiagramStyle(show_variances=False)
+
+    without_highlight = to_tikz(motif.model, style=tidy)
+    assert "loop above" not in without_highlight  # context variances still hidden
+
+    with_highlight = to_tikz(motif.model, style=tidy, highlight=chain)
+    loops = [line for line in with_highlight.splitlines() if "loop above" in line]
+    assert len(loops) == 2, "the chain's own two z <-> z variances must be drawn"
+    highlight_hex = tidy.highlight_colour.lstrip("#").upper()
+    assert all(highlight_hex in line for line in loops), "and emphasised"
+    # the 1/2 they contribute is visible
+    assert all("\\frac{1}{2}" in line for line in loops)
+
+
+def test_the_suppression_rule_is_stated_once_and_covers_every_filter():
+    """Any style flag that can hide an edge must go through draws_variance-style gating.
+
+    Enumerated deliberately: if a new filter is added, this test is where the rule gets applied
+    again rather than the bug being rediscovered on a figure.
+    """
+    style = DiagramStyle(show_variances=False)
+    assert style.draws_variance(highlighted=True) is True
+    assert style.draws_variance(highlighted=False) is False
+    assert DiagramStyle(show_variances=True).draws_variance(highlighted=False) is True
+    # show_unit_coefficients only affects LABEL text, never whether an edge is drawn
+    model = three_edge_model()
+    with_units = to_tikz(model, style=DiagramStyle(show_unit_coefficients=True))
+    without = to_tikz(model, style=DiagramStyle(show_unit_coefficients=False))
+    assert with_units.count("\\draw") == without.count("\\draw")
+
+
+def test_nodes_are_sized_by_their_contents_not_a_uniform_footprint():
+    style = DiagramStyle()
+    small = style.node_size("g", latent=False)
+    large = style.node_size(r"z^{(m)}_{m,0}", latent=False)
+    assert large[0] > small[0], "a longer label must get a wider box"
+    assert small[0] >= style.node_min_width, "but not smaller than the floor"
+    # an ellipse needs proportionally more room than a rectangle for the same text
+    assert style.node_size("abc", latent=True)[0] > style.node_size("abc", latent=False)[0]
+    # and it is all tunable from the style
+    roomy = DiagramStyle(rectangle_inset=0.5)
+    assert roomy.node_size("g", latent=False)[0] > small[0]
+
+
+def test_tikz_nodes_use_inner_sep_rather_than_a_uniform_minimum():
+    style = DiagramStyle()
+    tex = to_tikz(three_edge_model(), style=style)
+    assert f"inner sep={style.rectangle_inset}cm" in tex
+    assert f"inner sep={style.ellipse_inset}cm" in tex
+    # the minimums are a floor for a one-character label, not a target
+    assert f"minimum width={style.node_min_width}cm" in tex
+    assert style.node_min_width < 0.6
+
+
+def test_edges_stop_at_the_node_boundary():
+    """No arrow may be drawn to a node's centre and then covered by the node."""
+    from pathmgr.render.placement import Rect, boundary_point
+
+    rect = Rect(0.0, 0.0, 2.0, 1.0)
+    right = boundary_point((0.0, 0.0), (10.0, 0.0), rect, clearance=0.0)
+    assert abs(right[0] - 1.0) < 1e-9 and abs(right[1]) < 1e-9
+    up = boundary_point((0.0, 0.0), (0.0, 10.0), rect, clearance=0.0)
+    assert abs(up[1] - 0.5) < 1e-9
+    # a wider node pushes the start further out -- the whole point of not using a constant
+    wide = boundary_point((0.0, 0.0), (10.0, 0.0), Rect(0.0, 0.0, 4.0, 1.0), clearance=0.0)
+    assert wide[0] > right[0]
+    # clearance adds a visible gap on top
+    assert boundary_point((0.0, 0.0), (10.0, 0.0), rect, clearance=0.3)[0] > right[0]
+    # never overshoot the target
+    near = boundary_point((0.0, 0.0), (0.2, 0.0), rect, clearance=0.0)
+    assert near[0] <= 0.2 + 1e-9
+
+
+def test_label_placement_is_deterministic():
+    """Identical model in, identical TikZ out -- or figure diffs become unreadable."""
+    from battery import half_sibling_pedigree
+
+    model = half_sibling_pedigree()
+    first = to_tikz(model)
+    for _ in range(3):
+        assert to_tikz(model) == first
+    # and rebuilding the model from scratch gives the same bytes
+    assert to_tikz(half_sibling_pedigree()) == first
+
+
+def test_simple_diagrams_keep_the_plain_midpoint_label():
+    """The midpoint is the first candidate, so an uncluttered diagram is unchanged."""
+    model = pm.from_text("y ~ b*x\nx ~~ V_x*x")
+    tex = to_tikz(model, layout=Layout({"x": (0, 0), "y": (0, -2)}))
+    assert "node[pmLabel] {$b$}" in tex  # no pos= or shift, i.e. still the midpoint
+
+
+def test_label_placement_moves_a_label_that_would_collide():
+    """A label sitting on a node must be nudged off it."""
+    from pathmgr.render.placement import labelled_edges, place_labels
+
+    model = pm.Model()
+    model.add_vars("a", "b", "middle")
+    model.add_path("a", "b", "coefficient_with_a_long_name")
+    model.add_variance("a", "V")
+    # `middle` sits exactly where the a->b label would go
+    layout = Layout({"a": (0, 0), "b": (4, 0), "middle": (2, 0)})
+    style = DiagramStyle()
+    placed = place_labels(model, layout, style, labelled_edges(model, style))
+    placement = placed[("a", "b")]
+    assert (placement.position, placement.offset) != (0.5, 0.0), "should have moved off the node"
+
+    # and with avoidance off it stays at the midpoint
+    plain = DiagramStyle(avoid_label_collisions=False)
+    stubborn = place_labels(model, layout, plain, labelled_edges(model, plain))[("a", "b")]
+    assert (stubborn.position, stubborn.offset) == (0.5, 0.0)
+
+
+def test_both_back_ends_place_labels_identically():
+    """They share the placement pass, so a figure looks the same whichever draws it."""
+    from pathmgr.render.placement import labelled_edges, place_labels
+
+    from battery import half_sibling_pedigree
+
+    model = half_sibling_pedigree()
+    layout = Layout().completed(model)
+    style = DiagramStyle()
+    once = place_labels(model, layout, style, labelled_edges(model, style))
+    twice = place_labels(model, layout, style, labelled_edges(model, style))
+    assert {k: (v.position, v.offset) for k, v in once.items()} == {
+        k: (v.position, v.offset) for k, v in twice.items()
+    }
+
+
+def test_highlight_caption_shows_the_product_being_formed():
+    """Item 5: the figure and the derivation are the same object."""
+    from pathmgr.genetics import allele_motif
+
+    motif = allele_motif(n_variants=1)
+    chain = pm.WrightTracer(motif.model).trace(
+        motif.z("m", "mat", 0), motif.z("f", "mat", 0)
+    ).chains[0]
+
+    product = chain.tex_factors()
+    assert "\\cdot" in product
+    assert "\\frac{1}{2}" in product  # the variances are IN the product
+    assert "\\cdot 1 \\cdot" not in product  # unit coefficients dropped, as on the edges
+
+    contribution = chain.tex_contribution()
+    assert product in contribution
+    assert contribution.count("=") == 1  # <product> = <value>
+
+    tex = to_tikz(motif.model, highlight=chain, caption_name=r"\operatorname{Cov}")
+    assert "\\cdot" in tex
+    assert "\\operatorname{Cov}" in tex
+    assert "align=center" in tex  # the two-line caption
+
+
+def test_a_chain_of_only_unit_factors_still_shows_a_product():
+    model = pm.from_text("y ~ g\ng ~~ g")
+    chain = pm.WrightTracer(model).trace("g", "y").chains[0]
+    assert chain.tex_factors() == "1"
+
+
+@pytest.mark.skipif(not HAS_PDFLATEX, reason="pdflatex not available")
+def test_the_highlighted_allele_figure_compiles_with_its_two_line_caption(tmp_path):
+    from pathmgr.genetics import allele_motif
+
+    motif = allele_motif(n_variants=1)
+    chain = pm.WrightTracer(motif.model).trace(
+        motif.z("m", "mat", 0), motif.z("f", "mat", 0)
+    ).chains[0]
+    out = write_pdf(
+        motif.model,
+        tmp_path / "chain.pdf",
+        style=DiagramStyle(show_variances=False),
+        highlight=chain,
+        caption_name=r"\operatorname{Cov}\left[z^{(m)}_{m}, z^{(m)}_{f}\right]",
+    )
+    assert out.exists() and out.stat().st_size > 1000

@@ -38,6 +38,7 @@ from pathlib import Path
 
 from ..core.model import Model
 from .layout import Layout
+from .placement import labelled_edges, place_labels
 from .style import DiagramStyle
 
 __all__ = [
@@ -115,12 +116,14 @@ def _preamble(style: DiagramStyle, colours: "_Colours") -> list[str]:
     return [
         "\\begin{tikzpicture}[",
         f"  every node/.style={{font=\\{style.font_size}}},",
+        # sized by their CONTENTS: `inner sep` is the padding, the minimums only a floor for a
+        # one-character label. A uniform `minimum width/height` is what makes a diagram crowded.
         f"  pmObserved/.style={{draw={style.node_colour}, fill={style.node_fill}, "
-        f"{style.observed_shape}, minimum width={style.node_width}cm, "
-        f"minimum height={style.node_height}cm, inner sep=1pt}},",
+        f"{style.observed_shape}, inner sep={style.rectangle_inset}cm, "
+        f"minimum width={style.node_min_width}cm, minimum height={style.node_min_height}cm}},",
         f"  pmLatent/.style={{draw={style.node_colour}, fill={style.node_fill}, "
-        f"{style.latent_shape}, minimum width={style.node_width}cm, "
-        f"minimum height={style.node_height}cm, inner sep=1pt}},",
+        f"{style.latent_shape}, inner sep={style.ellipse_inset}cm, "
+        f"minimum width={style.node_min_width}cm, minimum height={style.node_min_height}cm}},",
         f"  pmDirected/.style={{{style.arrow_tip_directed}, "
         f"line width={style.directed_width}pt}},",
         f"  pmBidirected/.style={{{style.arrow_tip_bidirected}, "
@@ -138,6 +141,8 @@ def to_tikz(
     style: DiagramStyle | None = None,
     highlight=None,
     caption_chain: bool = True,
+    caption: str | None = None,
+    caption_name: str | None = None,
     scale: float = 1.0,
 ) -> str:
     """A bare ``tikzpicture`` for ``model``.
@@ -162,6 +167,7 @@ def to_tikz(
     colours = _Colours()
     body = _preamble(style, colours)
     lines: list[str] = []
+    placements = place_labels(model, layout, style, labelled_edges(model, style))
 
     # -- nodes -------------------------------------------------------------------------
     for variable in model.variables:
@@ -186,14 +192,19 @@ def to_tikz(
 
     # -- bidirected covariances --------------------------------------------------------
     for edge in model.bidirected_edges:
-        if edge.is_variance and not style.show_variances:
-            continue
         hot = frozenset((edge.a, edge.b)) in hot_bidirected
+        # a style flag governs CONTEXT; it never suppresses a highlighted edge
+        if edge.is_variance and not style.draws_variance(hot):
+            continue
         options = _edge_options(
             "pmBidirected", style.bidirected_colour, style, hot, highlighting, colours
         )
         label = style.edge_label((edge.a, edge.b), edge.value)
-        node = _label_node(label, style, hot, highlighting, colours)
+        node = _label_node(
+            label, style, hot, highlighting, colours,
+            None if edge.is_variance else placements.get((edge.a, edge.b)),
+            None if edge.is_variance else _direction(layout, edge.a, edge.b),
+        )
         if edge.is_variance:
             body.append(
                 f"  \\draw[{options}] ({_node_id(edge.a)}) to[loop above, looseness=6, "
@@ -218,7 +229,10 @@ def to_tikz(
             "pmCopath", style.copath_colour, style, hot, highlighting, colours
         )
         label = style.edge_label((copath.a, copath.b), copath.coefficient)
-        node = _label_node(label, style, hot, highlighting, colours)
+        node = _label_node(
+            label, style, hot, highlighting, colours,
+            placements.get((copath.a, copath.b)), _direction(layout, copath.a, copath.b),
+        )
         connector = "--" if seen == 0 else f"to[bend right={12 * seen}]"
         body.append(
             f"  \\draw[{options}] ({_node_id(copath.a)}) {connector} "
@@ -229,17 +243,30 @@ def to_tikz(
     if highlighting and caption_chain:
         min_x, min_y, max_x, _ = layout.bounds()
         mid_x = (min_x + max_x) / 2
-        path_tex = highlight.tex_path({v.name: v.label for v in model.variables if v.label})
-        if path_tex:
+        labels = {v.name: v.label for v in model.variables if v.label}
+        if caption is None:
+            name = None
+            if caption_name:
+                name = caption_name
+            caption = highlight.tex_caption(labels, name=name)
+        if caption:
+            # A caption may be two lines -- the Wright chain, then the product it contributes.
+            # `\\` is illegal INSIDE math mode, so each line gets its own $...$ and the break
+            # sits between them; align=center then stacks them.
+            stacked = "\\\\".join(f"${line}$" for line in caption.split("\\\\") if line)
             body.append(
-                f"  \\node[align=center] at ({mid_x:.3f},{min_y - 1.15:.3f}) "
-                f"{{${path_tex}$}};"
+                f"  \\node[align=center] at ({mid_x:.3f},{min_y - 1.35:.3f}) {{{stacked}}};"
             )
 
     body.append("\\end{tikzpicture}")
     lines.extend(colours.declarations())
     lines.extend(body)
     return "\n".join(lines) + "\n"
+
+
+def _direction(layout: Layout, a: str, b: str) -> tuple[float, float]:
+    (ax, ay), (bx, by) = layout[a], layout[b]
+    return (bx - ax, by - ay)
 
 
 def _edge_options(
@@ -270,16 +297,35 @@ def _hot_width(base: str, style: DiagramStyle) -> float:
 
 
 def _label_node(
-    label: str, style: DiagramStyle, hot: bool, highlighting: bool, colours: "_Colours"
+    label: str,
+    style: DiagramStyle,
+    hot: bool,
+    highlighting: bool,
+    colours: "_Colours",
+    placement=None,
+    direction: tuple[float, float] | None = None,
 ) -> str:
+    """A TikZ ``node`` for an edge label, honouring the collision-avoiding placement.
+
+    ``pos=`` moves it along the edge and the shifts move it perpendicular; both come from
+    :func:`pathmgr.render.placement.place_labels`, which both back ends share so they agree.
+    """
     if not label:
         return ""
-    colour = ""
+    options = ["pmLabel"]
     if hot:
-        colour = f", text={colours.name(style.highlight_colour)}"
+        options.append(f"text={colours.name(style.highlight_colour)}")
     elif highlighting and style.fade_unhighlighted:
-        colour = f", text={colours.name(style.faded_colour)}"
-    return f"node[pmLabel{colour}] {{${label}$}} "
+        options.append(f"text={colours.name(style.faded_colour)}")
+    if placement is not None:
+        if abs(placement.position - 0.5) > 1e-9:
+            options.append(f"pos={placement.position:.3f}")
+        if abs(placement.offset) > 1e-9 and direction is not None:
+            dx, dy = direction
+            length = (dx * dx + dy * dy) ** 0.5 or 1.0
+            options.append(f"xshift={-placement.offset * dy / length:.3f}cm")
+            options.append(f"yshift={placement.offset * dx / length:.3f}cm")
+    return "node[" + ", ".join(options) + "] {$" + label + "$} "
 
 
 def to_standalone(

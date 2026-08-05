@@ -302,11 +302,37 @@ distinguishable in greyscale:
 `to_image(..., legend=True)` draws a key. A variance is a self-loop, suppressible with
 `DiagramStyle(show_variances=False)`.
 
+**A style flag governs what CONTEXT is drawn; it must never suppress a highlighted edge.**
+`show_variances=False` still hides the surrounding variances, but the chain's own are always drawn
+and emphasised — in the allele chain the two `z <-> z` loops carry the `1/2 * 1/2` that produces the
+whole `/4`, so hiding them makes the figure contradict its caption and leaves a hand-tracing reader
+off by a factor of four. `DiagramStyle.draws_variance()` is where the rule lives; any new filter
+must follow it, and `test_the_suppression_rule_is_stated_once_and_covers_every_filter` enumerates
+them.
+
 **Highlighting a traced chain is the figure this project exists to produce** — the diagram and
 the covariance in one object. Pass any `Chain` from the tracer; its edges are emphasised, the rest
-faded, and the chain's own `tex_path()` becomes the caption. `examples/make_figures.py` produces
+faded, and the caption gives both the Wright chain and **the product being formed**
+(`Cov[...] = 1/2 · β · μ · β · 1/2 = ...`), from `Chain.tex_factors()` / `tex_contribution()`. `examples/make_figures.py` produces
 it for the allele-level model, where the highlighted chain *is* the proof that a co-path reaches
 the causes.
+
+**Nodes are sized by their contents** (`rectangle_inset` / `ellipse_inset`, with
+`node_min_*` only a floor for a one-character label) — a uniform `minimum width/height` is what
+makes a diagram crowded. Ellipses get a larger inset because an ellipse has proportionally less
+usable area than its bounding box; that is geometry, not padding.
+
+**Edges stop at each node's real boundary**, computed per node in
+[placement.py](src/pathmgr/render/placement.py). A constant clearance under-shortens for a wide
+ellipse and over-shortens for a small node, which is how arrowheads end up buried. Draw order is
+node fills → edges → node text, in *both* back ends, so an edge crossing an unrelated node stays
+visible without ever running across a label.
+
+**Edge labels avoid collisions, deterministically.** A greedy candidate-and-score pass
+(positions along the edge × perpendicular offsets) scored against node boxes and already-placed
+labels. The exact midpoint is always the first candidate, so an uncluttered diagram is unchanged.
+Determinism is not a nicety — identical model in, identical TikZ out, or figure diffs in the writeup
+become unreadable; there is a test. Both back ends share the pass so they cannot disagree.
 
 **Layout**: explicit coordinates are the reliable path and what pedigrees should use
 (`pedigree_layout` takes a generation per individual). The layered auto fallback exists so an
