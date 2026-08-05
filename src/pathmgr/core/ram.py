@@ -23,7 +23,7 @@ each let an entry be built from entries already computed, if `u` (resp. `v`) is 
 topological order. Cost is O(n^2 * mean-parents) symbolic multiply-adds instead of the
 O(n^3) of a matrix product on top of an inverse -- and, more importantly for sympy, every
 term is generated already in expanded sum-of-products form, so like terms cancel as they
-appear rather than after a blowup. See `docs/profile_ram.md` for measured timings.
+appear rather than after a blowup. See `docs/scale_ram.md` for measured timings.
 
 For a **cyclic** model (feedback loops) there is no topological order, so the engine falls
 back to the explicit inverse. This is a genuine capability difference from the chain

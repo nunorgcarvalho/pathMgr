@@ -587,7 +587,8 @@ class Model:
 
         - **Both edge types on the same pair.** Almost always double-counting: the co-path
           already induces the covariance the bidirected edge is stating by hand. This is the
-          mistake the superseded ``am_equilibrium_handwritten.pmg`` encoding made in reverse.
+          mistake the superseded ``tests/fixtures/am_equilibrium_handwritten.pmg`` encoding
+          made in reverse.
         - **A co-path onto a variable with no incoming paths and no variance.** A co-path
           contributes ``mu * Var[a] * Var[b]``, so if either endpoint has no variance of its own
           and no causes, the co-path contributes nothing at all and is silently inert.

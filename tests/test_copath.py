@@ -19,6 +19,7 @@ import sympy as sp
 import pathmgr as pm
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 # ======================================================================================
@@ -379,7 +380,7 @@ def test_copath_example_reproduces_the_writeup_results():
 
 def test_the_superseded_encoding_is_wrong_in_exactly_the_documented_way():
     """Pins the bug the co-path fixes, so the account in the fixture cannot rot."""
-    old = pm.from_text((EXAMPLES / "am_equilibrium_handwritten.pmg").read_text())
+    old = pm.from_text((FIXTURES / "am_equilibrium_handwritten.pmg").read_text())
     e = pm.RAMEngine(old)
     V_A, V_E, rho_y, rho_g = (old.sym(s) for s in ("V_A_eq", "V_E", "rho_y", "rho_g"))
     V_P = V_A + V_E
@@ -397,7 +398,7 @@ def test_the_superseded_encoding_is_wrong_in_exactly_the_documented_way():
 def test_both_encodings_agree_on_everything_the_old_one_got_right():
     """The co-path machinery reproduces what was verified by hand -- a real cross-check."""
     new = pm.from_text((EXAMPLES / "am_equilibrium.pmg").read_text())
-    old = pm.from_text((EXAMPLES / "am_equilibrium_handwritten.pmg").read_text())
+    old = pm.from_text((FIXTURES / "am_equilibrium_handwritten.pmg").read_text())
     e_new, e_old = pm.RAMEngine(new), pm.RAMEngine(old)
     rho_g = old.sym("rho_g")
     fixed_point = {rho_g: old.sym("rho_y") * old.sym("V_A_eq") / (old.sym("V_A_eq") + old.sym("V_E"))}

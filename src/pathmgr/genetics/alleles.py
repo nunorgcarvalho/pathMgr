@@ -55,7 +55,7 @@ Scale
 -----
 Node count grows as ``2M + 1`` per individual per variant plus segregation residuals, so keep
 ``M`` small: ``M = 2`` shows everything including the cross-variant results, and ``M = 3``
-matches the coordinator's oracle. See ``docs/profile_alleles.md`` for the measured limit. The
+matches the coordinator's oracle. See ``docs/scale_alleles.md`` for the measured limit. The
 aggregate results come from the ``g``-level model; this motif is not meant to scale.
 """
 

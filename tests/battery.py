@@ -4,15 +4,18 @@ One place where every model worth testing against lives, so a property that shou
 all models -- above all "the two engines agree" -- can be stated once and picked up
 automatically by anything added later. Add a model here and every battery-wide test covers it.
 
-Models come from three places: written directly below, imported from the task-specific test
-modules that introduced them, and (for the assortative-mating lineage, whose encoding is
-subtle) imported from ``scripts/profile_ram.py`` so there is exactly one definition of it.
+Models come from two places: written directly below, and imported from the task-specific test
+modules that introduced them.
+
+The dependency runs **outward from here**: ``scripts/scale_ram.py`` imports :func:`lineage`
+from this module, not the other way round. It used to be reversed, which meant the registry
+reached into a developer script for a model definition and the definition itself was never
+reachable from the test suite alone.
 """
 
 from __future__ import annotations
 
 import random
-import sys
 from pathlib import Path
 
 import sympy as sp
@@ -20,8 +23,6 @@ import sympy as sp
 import pathmgr as pm
 
 ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(ROOT / "scripts"))
 
 
 # ======================================================================================
@@ -193,11 +194,85 @@ def random_recursive(seed: int, n: int = 7) -> pm.Model:
 
 
 # ======================================================================================
+# the assortative-mating lineage
+# ======================================================================================
+def lineage(generations: int) -> pm.Model:
+    """A founding couple plus `generations` descendant generations, at AM equilibrium.
+
+    The **directed** encoding of assortment, and the reason it lives here rather than in the
+    script that profiles it: how assortment is represented is not the obvious way, and getting
+    it wrong is silent. A partner's genetic value enters as a directed path *from the focal
+    individual's phenotype* (`y_c -> g_p` with coefficient `rho_g`), not as a bidirected
+    `g_c <-> g_p` edge -- a bidirected edge is a *disturbance* covariance, and a child's genetic
+    value is endogenous, so a bidirected edge there asserts that a fully determined disturbance
+    covaries with something, which yields a Sigma that is not positive semi-definite.
+    ``Model.validate()`` now reports that case as an error. The full account is in
+    ``docs/assortment_representation_trap.md``.
+
+    Being in the battery gets it two-engine agreement coverage; its substantive properties (the
+    lineal-relative formula, equilibrium self-consistency, the mate correlation) are asserted in
+    ``tests/test_am_lineage.py``. ``scripts/scale_ram.py`` imports it from here to profile it.
+    """
+    m = pm.Model(f"lineage depth {generations}", units=pm.Units.unstandardized())
+    for name in ("V_A_eq", "V_E"):
+        m.declare(name, positive=True)
+    V_A, V_E, rho_g, rho_y = (m.sym(s) for s in ("V_A_eq", "V_E", "rho_g", "rho_y"))
+    V_P = V_A + V_E
+    # V_K = V_A0 / 2 and V_A_eq = V_A0 / (1 - rho_g), so V_K = V_A_eq (1 - rho_g) / 2
+    V_K = V_A * (1 - rho_g) / 2
+
+    def person(tag: str) -> None:
+        m.add_var(f"g_{tag}", latent=True)
+        m.add_var(f"e_{tag}", latent=True)
+        m.add_var(f"y_{tag}")
+        m.add_path(f"g_{tag}", f"y_{tag}", 1)
+        m.add_path(f"e_{tag}", f"y_{tag}", 1)
+
+    def founder(tag: str) -> None:
+        person(tag)
+        m.add_variance(f"g_{tag}", V_A)
+        m.add_variance(f"e_{tag}", V_E)
+
+    def partner_of(tag: str, focal: str) -> None:
+        """`tag` assorts on `focal`'s phenotype -- a directed copath, not a bidirected edge."""
+        person(tag)
+        b_e = rho_y * V_E / V_P  # so that Cov[e_partner, y_focal] = rho_y V_E
+        m.add_path(f"y_{focal}", f"g_{tag}", rho_g)
+        m.add_path(f"y_{focal}", f"e_{tag}", b_e)
+        # residual variances chosen to keep Var[g] = V_A_eq and Var[e] = V_E
+        m.add_variance(f"g_{tag}", V_A - rho_g**2 * V_P)
+        m.add_variance(f"e_{tag}", V_E - b_e**2 * V_P)
+        # Both components load on the same phenotype, which would induce a spurious
+        # within-individual Cov[g, e] = rho_g * b_e * V_P. GE-indep says that must be zero, so
+        # the disturbance covariance has to offset it exactly. Both variables are endogenous
+        # here but do have disturbance variances, so this is a legitimate (if easily missed)
+        # disturbance covariance -- validate() warns about it, correctly.
+        m.add_cov(f"g_{tag}", f"e_{tag}", -rho_g * b_e * V_P)
+
+    def child(tag: str, mother: str, father: str) -> None:
+        person(tag)
+        m.add_var(f"s_{tag}", latent=True)
+        m.add_variance(f"s_{tag}", V_K)
+        m.add_path(f"g_{mother}", f"g_{tag}", sp.Rational(1, 2))
+        m.add_path(f"g_{father}", f"g_{tag}", sp.Rational(1, 2))
+        m.add_path(f"s_{tag}", f"g_{tag}", 1)
+        m.add_variance(f"e_{tag}", V_E)
+
+    founder("0m")
+    partner_of("0f", "0m")
+    focal, partner = "0m", "0f"
+    for t in range(1, generations + 1):
+        child(f"{t}c", focal, partner)
+        partner_of(f"{t}p", f"{t}c")
+        focal, partner = f"{t}c", f"{t}p"
+    return m
+
+
+# ======================================================================================
 # the battery
 # ======================================================================================
 def _imported_models() -> dict[str, pm.Model]:
     """Models defined by the tasks that introduced them, so there is one definition each."""
-    from profile_ram import lineage  # scripts/profile_ram.py -- the directed AM encoding
     from test_am_spec_spike import am_pair_with_two_children
     from test_copath import allele_level_pair, mated_pair, shared_partner
 
@@ -225,7 +300,7 @@ def _imported_models() -> dict[str, pm.Model]:
         "AM pedigree depth 1": g_level_model(am_pedigree(1)).model,
         "AM pedigree half-sibs": g_level_model(am_pedigree(1, half_sib_at=0)).model,
         "AM handwritten (superseded)": pm.from_text(
-            (root / "examples" / "am_equilibrium_handwritten.pmg").read_text(),
+            (root / "tests" / "fixtures" / "am_equilibrium_handwritten.pmg").read_text(),
             name="AM handwritten",
         ),
     }

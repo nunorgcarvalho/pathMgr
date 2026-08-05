@@ -35,7 +35,7 @@ from conftest import canonical, ram_sigma
 # The builder model below is the hand-written-covariance encoding, superseded by co-paths in
 # task-20260804-173343. Its text twin is therefore the handwritten fixture, not the live example.
 AM_TEXT_FILE = (
-    Path(__file__).resolve().parent.parent / "examples" / "am_equilibrium_handwritten.pmg"
+    Path(__file__).resolve().parent / "fixtures" / "am_equilibrium_handwritten.pmg"
 )
 AM_COPATH_FILE = Path(__file__).resolve().parent.parent / "examples" / "am_equilibrium.pmg"
 
@@ -82,7 +82,7 @@ def am_pair_with_two_children() -> pm.Model:
 def test_text_front_end_produces_the_identical_model():
     """The hardest equivalence check available: the full AM model, both ways.
 
-    ``examples/am_equilibrium_handwritten.pmg`` is this same model in the text grammar. If the
+    ``tests/fixtures/am_equilibrium_handwritten.pmg`` is this same model in the text grammar. If the
     two front-ends ever drift, this is where it shows up.
     """
     from_text = pm.from_text(AM_TEXT_FILE.read_text(), name="AM equilibrium: pair + two full sibs")

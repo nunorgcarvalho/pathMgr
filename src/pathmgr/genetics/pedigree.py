@@ -373,7 +373,7 @@ class AMParameters:
     hold: str = "rho_y"
     #: numeric values for ``V_A(0)``, ``V_E`` and ``rho_y``. Supplying them resolves the
     #: per-generation recursion at build time so every coefficient is a number.
-    #: **This is what makes deep pedigrees tractable** -- see ``docs/profile_pedigree.md``: the
+    #: **This is what makes deep pedigrees tractable** -- see ``docs/scale_pedigree.md``: the
     #: co-path sequence count grows with depth either way, but a numeric term costs nothing to
     #: accumulate while a symbolic one grows. Symbolic closed forms are limited to a few
     #: generations; numeric trajectories are not.
@@ -431,7 +431,7 @@ class UnrolledModel:
 
         Applying these turns a result expressed in per-generation symbols into one in the base
         parameters. Expression size grows quickly with ``t``, which is the cost this task warns
-        about -- see ``docs/profile_pedigree.md``.
+        about -- see ``docs/scale_pedigree.md``.
         """
         if self.parameters.values:
             return {}  # already resolved at build time

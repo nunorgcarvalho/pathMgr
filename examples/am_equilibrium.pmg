@@ -5,7 +5,9 @@
 # three hand-written induced covariances this file used to carry (g_m<->g_f, e_m<->g_f,
 # e_f<->g_m), and it also supplies the one they were missing -- Cov[e_m, e_f] -- so that
 # Cov[y_m, y_f] = rho_y * V_P, the defining property of the mating model, now actually holds.
-# See examples/am_equilibrium_handwritten.pmg for the superseded encoding and why it was wrong.
+# The superseded encoding is kept as a regression fixture at
+# tests/fixtures/am_equilibrium_handwritten.pmg; why it was wrong is
+# docs/assortment_representation_trap.md.
 #
 # The co-path coefficient is NOT the correlation: Cov[y_m, y_f] = mu * V_P^2, so a target
 # phenotypic correlation rho_y needs mu = rho_y / V_P. Under assortment V_P grows every

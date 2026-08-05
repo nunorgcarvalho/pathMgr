@@ -152,19 +152,13 @@ def text_front_end_tour() -> None:
     print("  matches the builder version:", _same(m, bivariate_regression()))
     print()
 
-    # loaded from a file, and round-tripped. The builder twin below is the superseded
-    # hand-written-covariance encoding, so it is the *handwritten* fixture that matches it;
-    # am_equilibrium.pmg now uses a co-path (see the CO-PATHS section).
-    from_file = pm.from_text(
-        (HERE / "am_equilibrium_handwritten.pmg").read_text(), name="AM (from file)"
-    )
-    print("  loaded examples/am_equilibrium_handwritten.pmg:", from_file)
-    print("  matches the builder version:", _same(from_file, am_transmission_unit_pair()))
+    # loaded from a file, and round-tripped. This is the current co-path encoding of the AM
+    # unit -- the superseded hand-written-covariance encoding is retained only as a regression
+    # fixture in tests/fixtures/, and is deliberately not demonstrated here: see the CO-PATHS
+    # section for why that encoding was wrong.
+    from_file = pm.from_text((HERE / "am_equilibrium.pmg").read_text(), name="AM (from file)")
+    print("  loaded examples/am_equilibrium.pmg (co-path encoding):", from_file)
     print("  survives to_text -> from_text:", _same(pm.from_text(from_file.to_text()), from_file))
-    copath_file = pm.from_text((HERE / "am_equilibrium.pmg").read_text(), name="AM (co-path)")
-    print("  loaded examples/am_equilibrium.pmg (co-path):", copath_file)
-    print("  survives to_text -> from_text:",
-          _same(pm.from_text(copath_file.to_text()), copath_file))
     print()
 
     # errors point at the line
@@ -178,36 +172,6 @@ def text_front_end_tour() -> None:
         except (pm.TextSyntaxError, ValueError) as exc:
             print(f"  rejected ({why}): {str(exc).splitlines()[0]}")
     print()
-
-
-def am_transmission_unit_pair() -> pm.Model:
-    """The `.pmg` file's model, built with builder calls, for the equivalence check."""
-    m = pm.Model("AM (builder)", units=pm.Units.unstandardized())
-    for v in ("V_A_eq", "V_E", "V_K", "V_A0"):
-        m.declare(v, positive=True)
-    for i in ("m", "f", "o1", "o2"):
-        m.add_var(f"g_{i}", latent=True, label=rf"$g_{{{i}}}$")
-        m.add_var(f"e_{i}", latent=True, label=rf"$e_{{{i}}}$")
-        m.add_var(f"y_{i}", label=rf"$y_{{{i}}}$")
-        m.add_path(f"g_{i}", f"y_{i}", 1)
-        m.add_path(f"e_{i}", f"y_{i}", 1)
-        m.add_variance(f"e_{i}", "V_E")
-    for i in ("m", "f"):
-        m.add_variance(f"g_{i}", "V_A_eq")
-    m.add_cov("g_m", "g_f", "rho_g * V_A_eq")
-    m.add_cov("e_m", "g_f", "rho_g * V_E")
-    m.add_cov("e_f", "g_m", "rho_g * V_E")
-    for o in ("o1", "o2"):
-        m.add_var(f"s_{o}", latent=True, label=rf"$s_{{{o}}}$")
-        m.add_path("g_m", f"g_{o}", sp.Rational(1, 2))
-        m.add_path("g_f", f"g_{o}", sp.Rational(1, 2))
-        m.add_path(f"s_{o}", f"g_{o}", 1)
-        m.add_variance(f"s_{o}", "V_K")
-    m.assume("rho_g", "rho_y * h2_eq")
-    m.assume("h2_eq", "V_A_eq / (V_A_eq + V_E)")
-    m.assume("V_A_eq", "V_A0 / (1 - rho_g)")
-    m.assume("V_K", "V_A0 / 2")
-    return m
 
 
 def _same(a: pm.Model, b: pm.Model) -> bool:
@@ -492,7 +456,7 @@ def rendering_tour() -> None:
     faded = [l for l in highlighted.splitlines() if "BBBBBB" in l and "definecolor" not in l]
     print(f"    {len(hot)} edges emphasised, {len(faded)} faded, chain captioned beneath")
     print()
-    print("  run `python examples/make_figures.py` to write docs/figures/ "
+    print("  run `python examples/make_figures.py` to write examples/figures/ "
           "(tikz + png + compiled pdf)")
     print()
 

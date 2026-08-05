@@ -210,7 +210,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "output_dir",
         nargs="?",
-        default=str(ROOT / "docs" / "figures"),
+        default=str(ROOT / "examples" / "figures"),
         help="directory to write the figures into",
     )
     # argparse rejects an unknown flag outright, so a mistyped `--outdir DIR` errors instead of
