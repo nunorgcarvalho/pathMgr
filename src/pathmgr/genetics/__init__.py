@@ -7,10 +7,16 @@ this package imports from :mod:`pathmgr.core`, never the reverse, and no genetic
 - :mod:`.alleles`  -- the allele-level transmission motif, one generation
 - :mod:`.pedigree` -- pedigree scaffolding and the g-level unroller
 - :mod:`.am`       -- assortative-mating dynamics and the equilibrium fixed point
-  (task-20260804-151351)
 """
 
 from .alleles import AlleleMotif, allele_motif
+from .am import (
+    AMDynamics,
+    Equilibrium,
+    equilibrium,
+    plot_trajectories,
+    recursion_from_model,
+)
 from .pedigree import (
     AMParameters,
     Couple,
@@ -22,13 +28,18 @@ from .pedigree import (
 )
 
 __all__ = [
+    "AMDynamics",
     "AMParameters",
     "AlleleMotif",
+    "Equilibrium",
     "Couple",
     "Individual",
     "Pedigree",
     "UnrolledModel",
     "allele_motif",
     "am_pedigree",
+    "equilibrium",
     "g_level_model",
+    "plot_trajectories",
+    "recursion_from_model",
 ]

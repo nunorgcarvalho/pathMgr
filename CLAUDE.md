@@ -54,6 +54,7 @@ src/pathmgr/
   genetics/             the genetics layer, built on core
     alleles.py          the allele-level transmission motif ← allele_motif
     pedigree.py         pedigree scaffolding + the g-level unroller ← am_pedigree, g_level_model
+    am.py               dynamics + the equilibrium fixed point ← AMDynamics, equilibrium
     am.py               AM dynamics + equilibrium fixed point    (task-…-151351)
 tests/
   conftest.py                 shared helpers: ram_sigma wrapper, canonical() comparison
@@ -68,6 +69,7 @@ tests/
   test_copath.py              co-paths: Sunde's rules, the allele-level decisive test
   test_alleles.py             the allele motif and its validation table
   test_pedigree.py            the unroller; pins generation indexing at low t
+  test_am_dynamics.py         trajectories, equilibrium, convergence; tested at V_P(0) != 1
   test_relative_covariance_section1.py   Section 1 derived by the engine
 scripts/
   profile_ram.py              RAM engine profile + the AM copath reference model
@@ -446,6 +448,38 @@ stumbled into.
 Depth: **symbolic to ~6 generations, numeric past 10** — see
 [docs/profile_pedigree.md](docs/profile_pedigree.md). The split matters: use
 `AMParameters(values=...)` for trajectories.
+
+## Dynamics and equilibrium
+
+```python
+from pathmgr.genetics import AMDynamics, equilibrium, plot_trajectories
+equilibrium()                                   # symbolic fixed point, derived not quoted
+AMDynamics(0.4, 0.6, 0.3).trajectory(12)        # V_A(t), rho_g(t), h2(t), relative pairs
+plot_trajectories(AMDynamics(0.4, 0.6, 0.3), "dynamics.png")
+```
+
+**The recursion is read off the engine, not asserted.** `recursion_from_model` builds a
+one-generation pedigree and asks for `Var[g_child]`; it comes out as
+`V_K + V_A(t)(1+rho_g(t))/2` because that is what the path model implies. Every equilibrium result
+is then derived from it, so the boxed results are reproductions rather than restatements.
+
+**The fixed-point quadratic is NOT the writeup's form.** `relative_covariance.tex` gives
+`(1 - V_A0) rho_g^2 - rho_g + rho_y V_A0 = 0`, which is correct *there* because the writeup fixes
+`V_P(0) = 1` and uses it to eliminate `V_P`. It is **20% wrong at `V_P(0) = 1.2`**. The general form,
+which the package derives and which reduces to the writeup's exactly when `V_A(0) + V_E = 1`:
+
+```
+V_E rho_g^2  -  rho_g V_P(0)  +  rho_y V_A(0)  =  0
+```
+
+Equilibrium is solved **explicitly**, never by unrolling until things stop moving.
+`AMDynamics.generations_to_converge()` reports 6 generations to 1% and 10 to 0.1% — an independent
+reproduction of Sunde et al.'s six-to-ten.
+
+**Never choose test parameters that sum to 1.** Three separate results in this project have been
+right at `V_P = 1` and wrong elsewhere: seven rows of the allele table, one value in the co-path
+table, and this quadratic. `AMDynamics.unit_phenotypic_variance` flags the case so it is never
+silent, and every scale-sensitive test runs at three scales of which only one is 1.
 
 ## The correctness property — do not let this rot
 

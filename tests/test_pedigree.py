@@ -149,7 +149,17 @@ def test_segregation_variance_is_an_explicit_constant():
     assert unrolled.model.cov_value(f"s_{child}", f"s_{child}") == unrolled.V_K
 
     custom = g_level_model(pedigree, AMParameters(segregation_variance=sp.Symbol("V_K_custom")))
-    assert custom.V_K == sp.Symbol("V_K_custom")
+    # `V_K` comes back as the symbol the MODEL registered, not the one handed in: a caller's
+    # symbol carries its own sympy assumptions and would not compare equal, so substituting
+    # against it would silently do nothing.
+    assert custom.V_K == custom.model.sym("V_K_custom")
+    assert custom.V_K.name == "V_K_custom"
+    child = sorted(pedigree.children_of(pedigree.couples[0]))[0]
+    assert custom.model.cov_value(f"s_{child}", f"s_{child}") == custom.V_K
+    # and it is usable as a substitution key, which is the point
+    assert pm.RAMEngine(custom.model).var(f"g_{child}").subs({custom.V_K: 0}).has(
+        custom.V_K
+    ) is False
 
 
 # ======================================================================================

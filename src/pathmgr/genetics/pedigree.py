@@ -448,7 +448,11 @@ def g_level_model(
         V_A0 if t == 0 else model.declare(f"V_A_{t}", positive=True) for t in range(n)
     )
     V_K = (
-        parameters.segregation_variance
+        # canonicalise through the model, so `unrolled.V_K` is the symbol the MODEL registered.
+        # A symbol handed in by a caller carries its own sympy assumptions; the registry gives it
+        # the model's, and the two do not compare equal -- so returning the caller's object would
+        # make `subs(unrolled.V_K, ...)` silently do nothing.
+        model.expr(parameters.segregation_variance)
         if parameters.segregation_variance is not None
         else V_A0 / 2
     )
