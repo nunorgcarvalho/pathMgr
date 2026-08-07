@@ -122,6 +122,11 @@ class Equilibrium:
     #: to reconstruct: a symbol rebuilt with different sympy assumptions does not compare equal,
     #: so `subs` against it silently does nothing.
     symbols: dict = None
+    #: what any DISPLAY symbol introduced by :meth:`compact` stands for, e.g.
+    #: ``{V_P0: V_A0 + V_E}``. Applied before any caller-supplied values, so a compacted
+    #: Equilibrium still evaluates -- otherwise ``compact()`` would hand back an object whose
+    #: ``evaluate`` raises on a free symbol the caller never introduced.
+    definitions: dict = None
 
     def _resolve(self, values: dict) -> dict:
         """Accept ``{"V_A0": 0.4}`` as well as ``{symbol: value}``, and rationalise numbers."""
@@ -135,14 +140,22 @@ class Equilibrium:
 
     def substitute(self, values: dict) -> "Equilibrium":
         resolved = self._resolve(values)
+        definitions = self.definitions or {}
+
+        def apply(expression):
+            # definitions FIRST and separately: a single simultaneous subs would replace V_P0 with
+            # V_A0 + V_E and leave those unsubstituted, since subs does not revisit what it inserts
+            return expression.subs(definitions).subs(resolved)
+
         return Equilibrium(
-            rho_g=self.rho_g.subs(resolved),
-            V_A=self.V_A.subs(resolved),
-            V_P=self.V_P.subs(resolved),
-            h2=self.h2.subs(resolved),
-            quadratic=self.quadratic.subs(resolved),
-            writeup_quadratic=self.writeup_quadratic.subs(resolved),
+            rho_g=apply(self.rho_g),
+            V_A=apply(self.V_A),
+            V_P=apply(self.V_P),
+            h2=apply(self.h2),
+            quadratic=apply(self.quadratic),
+            writeup_quadratic=apply(self.writeup_quadratic),
             symbols=self.symbols,
+            definitions=definitions,
         )
 
     def evaluate(self, values: dict) -> dict[str, float]:
@@ -153,6 +166,53 @@ class Equilibrium:
             "V_P": float(sp.N(substituted.V_P)),
             "h2": float(sp.N(substituted.h2)),
         }
+
+    def compact(self, unit_phenotypic_variance: bool = False) -> "Equilibrium":
+        """The same fixed point written with ``V_P(0) = V_A(0) + V_E`` instead of the sum.
+
+        This is where the notation cost is highest -- the radicand is
+        ``(V_A0 + V_E)**2 - 4 V_A0 V_E rho_y``, which sympy expands, so the square appears as three
+        terms and the sum it came from is invisible. Compacted it reads
+        ``V_P0**2 - 4 V_A0 V_E rho_y``.
+
+        Purely a change of notation: every field is verified to restore to what it was before it is
+        returned, and ``equilibrium()`` itself is untouched, so nothing downstream is affected.
+
+        ``unit_phenotypic_variance=True`` additionally sets ``V_P(0) = 1``. It is opt-in and off by
+        default: the writeup's worked example happens to satisfy it, and treating that as general
+        is exactly the masking this project keeps being bitten by.
+        """
+        V_A0, V_E = self.symbols["V_A0"], self.symbols["V_E"]
+        V_P0 = sp.Symbol("V_P0", positive=True)
+
+        def rewrite(expression: sp.Expr) -> sp.Expr:
+            # the expanded square first, then the bare sum -- longest pattern wins, as ever
+            candidate = expression.subs(V_A0**2 + 2 * V_A0 * V_E + V_E**2, V_P0**2)
+            candidate = candidate.subs(V_A0 + V_E, V_P0)
+            if unit_phenotypic_variance:
+                candidate = candidate.subs(V_P0, 1)
+            restored = candidate.subs(V_P0, V_A0 + V_E)
+            if unit_phenotypic_variance:
+                restored = restored.subs(V_E, 1 - V_A0)
+                reference = expression.subs(V_E, 1 - V_A0)
+            else:
+                reference = expression
+            if sp.simplify(restored - reference) != 0:
+                return expression  # never trade correctness for brevity
+            return candidate if sp.count_ops(candidate) < sp.count_ops(expression) else expression
+
+        symbols = dict(self.symbols)
+        symbols["V_P0"] = V_P0
+        return Equilibrium(
+            rho_g=rewrite(self.rho_g),
+            V_A=rewrite(self.V_A),
+            V_P=rewrite(self.V_P),
+            h2=rewrite(self.h2),
+            quadratic=sp.Eq(rewrite(self.quadratic.lhs), self.quadratic.rhs),
+            writeup_quadratic=self.writeup_quadratic,
+            symbols=symbols,
+            definitions={V_P0: V_A0 + V_E},
+        )
 
     def __str__(self) -> str:
         return (

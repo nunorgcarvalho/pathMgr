@@ -410,6 +410,143 @@ class UnrolledModel:
     V_A0: sp.Symbol
     V_K: sp.Expr
 
+    # -- compaction: results in the notation a reader expects --------------------------
+    @property
+    def V_P_symbols(self) -> tuple[sp.Symbol, ...]:
+        """A display symbol ``V_P_t`` per generation, for :meth:`compact`.
+
+        Obtained through ``model.declare`` rather than ``sp.Symbol`` so the assumptions match the
+        rest of the model -- a symbol rebuilt with different assumptions does not compare equal,
+        and ``subs`` against it silently does nothing. ``declare`` does not bump ``model.revision``,
+        so asking for these never invalidates an engine's cached ``Sigma``.
+        """
+        return tuple(
+            self.model.declare(f"V_P_{t}", positive=True) for t in range(len(self.V_A))
+        )
+
+    @property
+    def rho_g_symbols(self) -> tuple[sp.Symbol, ...]:
+        """A display symbol ``rho_g_t`` per generation, for :meth:`compact`."""
+        return tuple(
+            self.model.declare(f"rho_g_{t}", real=True) for t in range(len(self.V_A))
+        )
+
+    def compact_definitions(self) -> dict[sp.Symbol, sp.Expr]:
+        """What each display symbol stands for -- the inverse of :meth:`compact`.
+
+        Substituting these back into a compacted expression must return the original. That is not
+        a nicety: it is how :meth:`compact` checks itself, and how a caller can verify a figure's
+        caption still means what the engine computed.
+        """
+        definitions: dict[sp.Symbol, sp.Expr] = {}
+        for t, (V_P_t, rho_g_t) in enumerate(zip(self.V_P_symbols, self.rho_g_symbols)):
+            definitions[V_P_t] = self.V_A[t] + self.V_E
+            definitions[rho_g_t] = self.rho_y * self.V_A[t] / (self.V_A[t] + self.V_E)
+        return definitions
+
+    def _unit_phenotypic_generations(self) -> tuple[int, ...]:
+        """Generations the MODEL states have unit phenotypic variance. Never inferred.
+
+        Only an explicit ``assume`` counts. Guessing that ``V_P = 1`` because the numbers happen to
+        sum to one is the masking that has caught three separate results in this project, so
+        compaction will not do it on a caller's behalf.
+        """
+        found = []
+        for t in range(len(self.V_A)):
+            target = self.V_A[t] + self.V_E - 1
+            for equation in self.model.assumptions:
+                if sp.simplify((equation.lhs - equation.rhs) - target) == 0:
+                    found.append(t)
+                    break
+        return tuple(found)
+
+    def _unit_substitutions(self) -> dict[sp.Symbol, sp.Expr]:
+        """``V_E`` in terms of ``V_A(t)``, from an asserted unit phenotypic variance.
+
+        Solved from the matched relation directly rather than through
+        ``Model.substitutions(solve_for=["V_E"])``, which takes the **first** assumption mentioning
+        ``V_E`` -- on an unrolled model that is the ``V_A`` recursion, not the relation meant here,
+        and it returns a wrong answer without complaining.
+        """
+        for t in self._unit_phenotypic_generations():
+            return {self.V_E: 1 - self.V_A[t]}
+        return {}
+
+    def compact(self, expression: sp.Expr, use_rho_g: bool = True) -> sp.Expr:
+        """Rewrite ``expression`` using ``V_P(t)`` and ``rho_g(t)`` where that makes it shorter.
+
+        Engine output is correct and unreadable::
+
+            V_A0*(V_A0*rho_y + V_A0 + V_E)*(V_A_1*rho_y + V_A_1 + V_E)/(4*(V_A0+V_E)*(V_A_1+V_E))
+
+        compacted::
+
+            V_A0*(rho_g_0 + 1)*(rho_g_1 + 1)/4
+
+        which is the form the writeup states and a reader can check against it.
+
+        **This is a display step, not a computation.** ``cov()`` keeps returning the general
+        expression; nothing downstream should consume the compacted form. It is pattern-based, so
+        it needs the derived sums intact -- ``factor()`` output compacts, ``expand()`` output does
+        not -- and it is applied per generation, because eliminating ``V_E`` globally instead mixes
+        generations and makes the result *longer*.
+
+        **Every candidate is verified before it is returned**: the display symbols are substituted
+        back and the result compared with the input, and a candidate that does not match is
+        discarded. So compaction cannot quietly change a value -- the worst it can do is decline to
+        shorten one. That is stronger than checking the ``rho_g`` identity alone, and it costs one
+        ``simplify`` per candidate.
+
+        If the model *states* that a generation has unit phenotypic variance (via ``assume``), that
+        generation's ``V_P`` collapses to 1. It is never inferred from the numbers.
+        """
+        V_P_symbols, rho_g_symbols = self.V_P_symbols, self.rho_g_symbols
+        unit = self._unit_phenotypic_generations()
+
+        # When the model asserts unit phenotypic variance, both sides of the check have to be read
+        # under that assertion -- otherwise a candidate that collapsed V_P to 1 is compared against
+        # an expression that did not, and the correct candidate is rejected. `substitutions` solves
+        # the assumed relation for V_E, which is exact rather than pattern-based.
+        unit_subs = self._unit_substitutions()
+        target = sp.simplify(expression.subs(unit_subs)) if unit_subs else expression
+        definitions = self.compact_definitions()
+
+        def verified(candidate: sp.Expr) -> sp.Expr | None:
+            restored = candidate.subs(definitions).subs(unit_subs)
+            return candidate if sp.simplify(restored - target) == 0 else None
+
+        base = sp.factor(expression)
+        for t, V_P_t in enumerate(V_P_symbols):
+            base = base.subs(self.V_A[t] + self.V_E, V_P_t)
+
+        candidates = [sp.factor(base)]
+        if use_rho_g:
+            with_rho_g = base
+            for t, (V_P_t, rho_g_t) in enumerate(zip(V_P_symbols, rho_g_symbols)):
+                with_rho_g = with_rho_g.subs(
+                    self.rho_y * self.V_A[t] + V_P_t, V_P_t * (1 + rho_g_t)
+                )
+            candidates.append(sp.factor(sp.cancel(with_rho_g)))
+
+        if unit:
+            collapse = {V_P_symbols[t]: 1 for t in unit}
+            candidates = [c.subs(collapse) for c in candidates] + candidates
+
+        best = expression
+        for candidate in candidates:
+            checked = verified(candidate)
+            if checked is not None and sp.count_ops(checked) < sp.count_ops(best):
+                best = checked
+        return best
+
+    def explain_compaction(self) -> str:
+        """One line naming what the display symbols mean, so a compacted result is never unlabelled."""
+        unit = self._unit_phenotypic_generations()
+        note = f"; V_P({', '.join(str(t) for t in unit)}) = 1 by assumption" if unit else ""
+        return (
+            f"compacted with V_P(t) = V_A(t) + V_E and rho_g(t) = rho_y V_A(t)/V_P(t){note}"
+        )
+
     def g(self, who: str) -> str:
         return f"g_{who}"
 

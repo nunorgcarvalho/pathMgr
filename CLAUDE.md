@@ -359,6 +359,24 @@ faded, and the caption gives both the Wright chain and **the product being forme
 it for the allele-level model, where the highlighted chain *is* the proof that a co-path reaches
 the causes.
 
+**Compaction is a display step, and it verifies itself.** `UnrolledModel.compact(expr)` rewrites a
+result with `V_P(t) = V_A(t) + V_E` and `rho_g(t) = rho_y V_A(t)/V_P(t)` — so the avuncular
+covariance reads `V_A0*(1 + rho_g_0)*(1 + rho_g_1)/4` instead of a ratio of four sums. `cov()` is
+unchanged and nothing downstream consumes the compacted form. Three things it does deliberately:
+every candidate is checked by substituting `compact_definitions()` back and comparing, so it can
+decline to shorten but **cannot alter a value**; it is applied **per generation**, because
+eliminating `V_E` globally instead mixes generations and makes results *longer*; and it needs the
+derived sums intact, so it works on `factor()` output and not on `expand()` output. `V_P(t)`
+collapses to 1 **only when the model states it** via `assume` — never inferred from numbers.
+`explain_compaction()` gives the one line that must accompany a compacted result.
+`Equilibrium.compact()` does the same for the fixed point, where the radicand
+`(V_A0 + V_E)**2 - 4 V_A0 V_E rho_y` is otherwise expanded beyond recognition.
+
+**Careful with `Model.substitutions(solve_for=[...])`**: it takes the **first** assumption
+mentioning the symbol. On an unrolled model, asking it to eliminate `V_E` returns the `V_A`
+recursion solved for `V_E`, not whatever relation you had in mind, and says nothing. Solve the
+specific relation yourself when you know which one you mean.
+
 **The caption goes through the style, like every other label.** It is the only part of a figure
 that renders arbitrary symbolic expressions, so it is the part most likely to need adjusting, and
 it used to bypass `DiagramStyle` entirely — which produced figures whose caption *contradicted* the

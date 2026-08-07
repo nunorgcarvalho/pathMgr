@@ -406,3 +406,124 @@ def test_layout_places_partners_adjacent():
     assert pedigree.generation_order(1) == am_pedigree(
         2, children_per_couple=2, breeding_children=1
     ).generation_order(1)
+
+
+# ======================================================================================
+# compaction: results in the notation a reader expects (task-20260805-161349)
+# ======================================================================================
+def _compaction_cases():
+    """A spread of queries over an unrolled pedigree, with and without the unit assumption."""
+    pedigree = am_pedigree(2, children_per_couple=2, breeding_children=1)
+    unrolled = g_level_model(pedigree)
+    engine = pm.RAMEngine(unrolled.model)
+    founder = pedigree.couples[0].maternal
+    children = sorted(pedigree.children_of(pedigree.couples[0]))
+    grandchild = sorted(pedigree.children_of(pedigree.couples[1]))[0]
+    pairs = [
+        (f"y_{founder}", f"y_{children[0]}"),
+        (f"y_{children[0]}", f"y_{children[1]}"),
+        (f"y_{founder}", f"y_{grandchild}"),
+        (f"y_{children[1]}", f"y_{grandchild}"),
+        (f"g_{founder}", f"g_{grandchild}"),
+        (f"g_{children[0]}", f"g_{children[1]}"),
+    ]
+    return unrolled, engine, pairs
+
+
+def test_compaction_never_changes_the_value():
+    """THE test for this feature. Compaction may decline to shorten; it may not alter."""
+    unrolled, engine, pairs = _compaction_cases()
+    definitions = unrolled.compact_definitions()
+    for x, y in pairs:
+        raw = engine.cov(x, y)
+        compacted = unrolled.compact(raw)
+        assert sp.simplify(compacted.subs(definitions) - raw) == 0, (x, y, compacted)
+
+
+def test_compaction_actually_shortens_the_results_it_is_for():
+    """Guards against a change that quietly turns compaction into a no-op."""
+    unrolled, engine, pairs = _compaction_cases()
+    shortened = 0
+    for x, y in pairs:
+        raw = engine.cov(x, y)
+        if sp.count_ops(unrolled.compact(raw)) < sp.count_ops(sp.factor(raw)):
+            shortened += 1
+    assert shortened >= 4, f"only {shortened} of {len(pairs)} got shorter"
+
+
+def test_compaction_produces_the_textbook_forms():
+    """The point of the notation: these are the expressions the writeup states."""
+    pedigree = am_pedigree(2, children_per_couple=2, breeding_children=1)
+    unrolled = g_level_model(pedigree)
+    engine = pm.RAMEngine(unrolled.model)
+    children = sorted(pedigree.children_of(pedigree.couples[0]))
+    grandchild = sorted(pedigree.children_of(pedigree.couples[1]))[0]
+    V_A0 = unrolled.V_A0
+    rho_g_0, rho_g_1 = unrolled.rho_g_symbols[0], unrolled.rho_g_symbols[1]
+
+    sibs = unrolled.compact(engine.cov(f"y_{children[0]}", f"y_{children[1]}"))
+    assert sp.simplify(sibs - V_A0 * (1 + rho_g_0) / 2) == 0, sibs
+
+    avuncular = unrolled.compact(engine.cov(f"y_{children[1]}", f"y_{grandchild}"))
+    assert sp.simplify(avuncular - V_A0 * (1 + rho_g_0) * (1 + rho_g_1) / 4) == 0, avuncular
+
+
+def test_unit_phenotypic_variance_collapses_only_when_the_model_says_so():
+    """Point 5, and the guard on it: an unstated unit variance is never assumed."""
+    def build(assert_unit):
+        pedigree = am_pedigree(1, children_per_couple=2, half_sib_at=0)
+        unrolled = g_level_model(pedigree)
+        if assert_unit:
+            unrolled.model.assume(unrolled.V_A[0] + unrolled.V_E, 1)
+        return unrolled, pm.RAMEngine(unrolled.model), pedigree
+
+    # the no-common-ancestor covariance is rho_g^2 V_P, so V_P is visible in it
+    general, engine, pedigree = build(False)
+    a, b = pedigree.couples[0].paternal, pedigree.couples[1].paternal
+    raw = engine.cov(f"g_{a}", f"g_{b}")
+    assert general.V_P_symbols[0] in general.compact(raw).free_symbols, (
+        "V_P must survive when the model never claimed it was 1"
+    )
+
+    stated, engine_unit, pedigree_unit = build(True)
+    a2, b2 = pedigree_unit.couples[0].paternal, pedigree_unit.couples[1].paternal
+    compacted = stated.compact(engine_unit.cov(f"g_{a2}", f"g_{b2}"))
+    assert stated.V_P_symbols[0] not in compacted.free_symbols, compacted
+    assert stated._unit_phenotypic_generations() == (0,)
+    assert "V_P(0) = 1 by assumption" in stated.explain_compaction()
+
+
+def test_compaction_does_not_change_what_cov_returns():
+    """A display step must stay a display step."""
+    unrolled, engine, pairs = _compaction_cases()
+    before = [engine.cov(x, y) for x, y in pairs]
+    for x, y in pairs:
+        unrolled.compact(engine.cov(x, y))
+    after = [engine.cov(x, y) for x, y in pairs]
+    assert before == after
+
+
+def test_asking_for_display_symbols_does_not_invalidate_the_engine_cache():
+    """`declare` must not bump model.revision, or compaction would cost a full Sigma rebuild."""
+    unrolled, engine, _ = _compaction_cases()
+    engine.sigma_copath_free()
+    revision = unrolled.model.revision
+    unrolled.V_P_symbols, unrolled.rho_g_symbols, unrolled.compact_definitions()
+    assert unrolled.model.revision == revision
+
+
+def test_the_equilibrium_can_be_reported_compactly():
+    from pathmgr.genetics import equilibrium
+
+    eq = equilibrium()
+    compact = eq.compact()
+    V_A0, V_E = eq.symbols["V_A0"], eq.symbols["V_E"]
+    V_P0 = compact.symbols["V_P0"]
+
+    assert V_P0 in compact.rho_g.free_symbols, compact.rho_g
+    assert sp.count_ops(compact.rho_g) < sp.count_ops(eq.rho_g)
+    # and it is the same fixed point
+    assert sp.simplify(compact.rho_g.subs(V_P0, V_A0 + V_E) - eq.rho_g) == 0
+    # the numbers are untouched
+    assert abs(compact.evaluate({"V_A0": 0.4, "V_E": 0.6, "rho_y": 0.3})["rho_g"]
+               - eq.evaluate({"V_A0": 0.4, "V_E": 0.6, "rho_y": 0.3})["rho_g"]) < 1e-12
