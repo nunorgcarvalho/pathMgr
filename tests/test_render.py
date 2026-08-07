@@ -731,3 +731,147 @@ def test_routing_can_be_switched_off():
     off = DiagramStyle(show_variances=False, route_edges_around_nodes=False)
     assert route_edges(model, layout, DiagramStyle(show_variances=False))
     assert "to[bend" not in to_tikz(model, layout=layout, style=off)
+
+
+# ======================================================================================
+# the caption goes through the style, like every other label (task-20260807-183029)
+# ======================================================================================
+def _unit_chain_model():
+    """A chain carrying unit coefficients, so omit_unit visibly changes the caption."""
+    return pm.from_text(
+        """
+        latent: z1_m, z2_m, z1_p, z2_p, g_m, g_p, e_m, e_p
+        positive: V_E, beta_1, beta_2
+        g_m ~ beta_1*z1_m + beta_2*z2_m
+        g_p ~ beta_1*z1_p + beta_2*z2_p
+        y_m ~ g_m + e_m
+        y_p ~ g_p + e_p
+        z1_m ~~ 1*z1_m
+        z2_m ~~ 1*z2_m
+        z1_p ~~ 1*z1_p
+        z2_p ~~ 1*z2_p
+        e_m ~~ V_E*e_m
+        e_p ~~ V_E*e_p
+        y_m -- (rho_y/(V_E + beta_1**2 + beta_2**2))*y_p
+        """
+    )
+
+
+def test_caption_and_diagram_show_the_same_factors():
+    """The defect was the MISMATCH, so the test asserts agreement, not either convention.
+
+    With ``show_unit_coefficients=True`` the diagram draws every coefficient of 1 while the caption
+    used to drop them: seven factors drawn against three written, on the one figure whose job is to
+    let a reader check the product edge by edge.
+    """
+    model = _unit_chain_model()
+    chain = pm.WrightTracer(model).trace("z1_m", "z1_p").chains[0]
+
+    for show_units in (False, True):
+        style = DiagramStyle(show_unit_coefficients=show_units)
+        caption = chain.tex_caption(**style.caption_options())
+        product = caption.split("\\\\")[1].split(" = ")[0]
+        drawn = [
+            style.edge_label(edge, coeff)
+            for edge, coeff in [((a, b), c) for a, b, c in _chain_edge_coefficients(model, chain)]
+        ]
+        # a factor of 1 is drawn iff the style says so, and the caption must make the same choice
+        caption_has_units = r"1 \cdot" in product or product.endswith(" 1")
+        diagram_has_units = any(label == "1" for label in drawn)
+        assert caption_has_units == diagram_has_units, (
+            f"show_unit_coefficients={show_units}: caption {product!r} vs drawn {drawn!r}"
+        )
+
+
+def _chain_edge_coefficients(model, chain):
+    """``(src, dst, coeff)`` for each directed edge the chain traverses."""
+    out = []
+    for src, dst in chain.directed_edges():
+        for edge in model.directed_edges:
+            if (edge.src, edge.dst) == (src, dst):
+                out.append((src, dst, edge.coeff))
+    return out
+
+
+def test_the_default_caption_is_unchanged_by_going_through_the_style():
+    """Existing figures must not move: the default style must reproduce the old default exactly."""
+    model = _unit_chain_model()
+    chain = pm.WrightTracer(model).trace("z1_m", "z1_p").chains[0]
+    assert chain.tex_caption() == chain.tex_caption(**DiagramStyle().caption_options())
+
+
+def test_a_subexpression_can_be_rendered_under_the_documents_own_name():
+    """The writeup calls this sum ``\\VPo``; rendering the sum it came from is unreadable there."""
+    model = _unit_chain_model()
+    V_E, beta_1, beta_2 = (model.sym(s) for s in ("V_E", "beta_1", "beta_2"))
+    V_P0 = V_E + beta_1**2 + beta_2**2
+    chain = pm.WrightTracer(model).trace("z1_m", "z1_p").chains[0]
+
+    plain = chain.tex_caption()
+    assert "V_{E} + \\beta_{1}^{2}" in plain, plain
+
+    style = DiagramStyle(latex_names={V_P0: r"\VPo"})
+    named = chain.tex_caption(**style.caption_options())
+    assert r"\VPo" in named
+    assert "V_{E} + \\beta_{1}^{2}" not in named, named
+    # BOTH caption lines, not just the product
+    assert named.count(r"\VPo") == 2, named
+
+
+@pytest.mark.parametrize("back_end", ["tikz", "raster"])
+def test_document_names_reach_both_back_ends(back_end, tmp_path):
+    model = _unit_chain_model()
+    V_E, beta_1, beta_2 = (model.sym(s) for s in ("V_E", "beta_1", "beta_2"))
+    style = DiagramStyle(latex_names={V_E + beta_1**2 + beta_2**2: r"\VPo"})
+    layout = Layout({name: (i * 1.6, (i % 3) * 1.4) for i, name in enumerate(model.names)})
+    chain = pm.WrightTracer(model).trace("z1_m", "z1_p").chains[0]
+
+    if back_end == "tikz":
+        out = to_tikz(model, layout=layout, style=style, highlight=chain)
+        assert r"\VPo" in out
+        assert "V_{E} + \\beta_{1}^{2}" not in out, "the raw sum survived somewhere in the figure"
+    else:
+        # the raster back end renders through mathtext, so just check it draws without raising
+        path = to_image(model, tmp_path / "named.png", layout=layout, style=style, highlight=chain)
+        assert path.exists() and path.stat().st_size > 0
+
+
+def test_document_names_apply_to_edge_labels_too():
+    """A figure calling a sum one thing on an edge and another in its caption is the same defect."""
+    model = _unit_chain_model()
+    V_E, beta_1, beta_2 = (model.sym(s) for s in ("V_E", "beta_1", "beta_2"))
+    style = DiagramStyle(latex_names={V_E + beta_1**2 + beta_2**2: r"\VPo"})
+    copath = model.copaths[0]
+    assert r"\VPo" in style.copath_label(copath), style.copath_label(copath)
+
+
+@pytest.mark.skipif(not HAS_MATPLOTLIB, reason="matplotlib not available")
+def test_the_raster_back_end_falls_back_for_names_it_cannot_typeset(tmp_path):
+    """A document macro is defined in the DOCUMENT, which matplotlib has never seen.
+
+    ``\\VPo`` renders in TikZ, which is fed to real LaTeX. matplotlib's mathtext knows a fixed set
+    of commands and raises on anything else -- mid-savefig, naming a macro the user never typed
+    into pathmgr. So the raster preview drops names it cannot render and keeps the ones it can.
+    """
+    from pathmgr.render.raster import _mathtext_safe_names
+
+    model = _unit_chain_model()
+    V_E, beta_1, beta_2 = (model.sym(s) for s in ("V_E", "beta_1", "beta_2"))
+    V_P0 = V_E + beta_1**2 + beta_2**2
+
+    names = {V_P0: r"\VPo", beta_1: r"\beta_{1}"}
+    safe = _mathtext_safe_names(names)
+    assert V_P0 not in safe, "an undefined macro must not reach mathtext"
+    assert beta_1 in safe, "a standard command must survive the filter"
+
+    # and the figure still renders rather than raising
+    layout = Layout({name: (i * 1.6, (i % 3) * 1.4) for i, name in enumerate(model.names)})
+    chain = pm.WrightTracer(model).trace("z1_m", "z1_p").chains[0]
+    path = to_image(
+        model,
+        tmp_path / "fallback.png",
+        layout=layout,
+        style=DiagramStyle(latex_names=names),
+        highlight=chain,
+    )
+    assert path.exists() and path.stat().st_size > 0

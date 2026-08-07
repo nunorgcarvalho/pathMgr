@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 
 import sympy as sp
 
+from ..core.tracing import tex
+
 __all__ = ["DiagramStyle", "coefficient_label"]
 
 #: LaTeX control sequences that take up no visual width when estimating a label's size
@@ -45,16 +47,22 @@ def _visible_length(label: str) -> int:
     return max(1, length)
 
 
-def coefficient_label(value: sp.Expr, omit_unit: bool = True) -> str:
+def coefficient_label(
+    value: sp.Expr, omit_unit: bool = True, latex_names: dict | None = None
+) -> str:
     """A coefficient as LaTeX math *without* delimiters, or ``""`` to draw no label.
 
     ``rho_y`` becomes ``\\rho_{y}``, not ``rho_y``. A coefficient of exactly 1 renders as nothing
     by default, following Sunde ("from here on, we will omit the unit path coefficients"), which
     keeps a pedigree diagram readable.
+
+    ``latex_names`` applies here as well as in captions, so a figure is internally consistent: a
+    document that calls a sum ``\\VPo`` wants it called that on the co-path label *and* in the
+    caption underneath, not one of each.
     """
     if omit_unit and value == 1:
         return ""
-    return sp.latex(value)
+    return tex(value, latex_names)
 
 
 @dataclass
@@ -108,6 +116,12 @@ class DiagramStyle:
     label_overrides: dict[tuple[str, str], str] = field(default_factory=dict)
     #: per-variable label overrides, taking precedence over ``Variable.label``
     node_label_overrides: dict[str, str] = field(default_factory=dict)
+    #: render a symbol or subexpression under the name the *document* uses for it, e.g.
+    #: ``{V_A0 + V_E: r"\VPo"}``. The analogue of ``node_label_overrides``, keyed by expression
+    #: rather than by node, and the channel captions use for symbols the surrounding prose has
+    #: already named. Composite keys work, not only plain symbols -- see
+    #: :func:`pathmgr.core.tracing.tex`.
+    latex_names: dict = field(default_factory=dict)
     font_size: str = "small"
 
     # -- arrow tips --------------------------------------------------------------------
@@ -161,7 +175,27 @@ class DiagramStyle:
         reversed_key = (key[1], key[0])
         if reversed_key in self.label_overrides:
             return self.label_overrides[reversed_key]
-        return coefficient_label(value, omit_unit=not self.show_unit_coefficients)
+        return coefficient_label(
+            value, omit_unit=not self.show_unit_coefficients, latex_names=self.latex_names
+        )
+
+    def caption_options(self) -> dict:
+        """The caption's share of the style, as plain kwargs for ``Chain.tex_caption``.
+
+        The caption is the one part of a figure that renders arbitrary symbolic expressions, so it
+        is the part most likely to need adjusting -- and until this existed it was the only label
+        text that did not go through the style at all. That produced figures whose caption
+        contradicted the diagram above it: with ``show_unit_coefficients=True`` the diagram drew
+        every factor of 1 and the caption dropped them, on the very figure whose job is to let a
+        reader check the product edge by edge.
+
+        Returned as kwargs rather than passed as a style object because :mod:`pathmgr.core` may not
+        import :mod:`pathmgr.render`.
+        """
+        return {
+            "omit_unit": not self.show_unit_coefficients,
+            "latex_names": self.latex_names or None,
+        }
 
     def copath_label(self, copath) -> str:
         """LaTeX math for a co-path's label, bracketed when it is a **correlation**.
@@ -179,7 +213,9 @@ class DiagramStyle:
             return self.edge_label(key, copath.declared)
         if not copath.is_standardized:
             return self.edge_label(key, copath.coefficient)
-        inner = coefficient_label(copath.correlation, omit_unit=False)
+        inner = coefficient_label(
+            copath.correlation, omit_unit=False, latex_names=self.latex_names
+        )
         return rf"\left[{inner}\right]"
 
     def node_label(self, name: str, variable_label: str | None) -> str:

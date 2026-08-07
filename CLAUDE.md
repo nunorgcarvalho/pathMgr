@@ -359,6 +359,22 @@ faded, and the caption gives both the Wright chain and **the product being forme
 it for the allele-level model, where the highlighted chain *is* the proof that a co-path reaches
 the causes.
 
+**The caption goes through the style, like every other label.** It is the only part of a figure
+that renders arbitrary symbolic expressions, so it is the part most likely to need adjusting, and
+it used to bypass `DiagramStyle` entirely — which produced figures whose caption *contradicted* the
+diagram above it (`show_unit_coefficients=True` drew seven factors while the caption wrote three).
+`DiagramStyle.caption_options()` supplies the caption's share of the style as plain kwargs, because
+`core` may not import `render`; `Chain.tex_caption(omit_unit=..., latex_names=...)` takes them.
+
+**`latex_names` renders a symbol the way the *document* names it** — `{V_A0 + V_E: r"\VPo"}` — the
+analogue of `node_label_overrides` but keyed by expression, and it applies to edge labels as well as
+captions so one figure cannot call the same sum two different things. **Composite** keys work, not
+only plain symbols, which is the case that actually came up; `pathmgr.core.tracing.tex()` does it by
+substituting a placeholder symbol, longest key first. Note the raster back end **drops names it
+cannot typeset**: a document macro is defined in the document, and matplotlib's mathtext has never
+seen it, so `to_image` falls back to the plain expression rather than raising mid-`savefig`. TikZ
+output, which goes to real LaTeX, keeps them.
+
 **Nodes are sized by their contents** (`rectangle_inset` / `ellipse_inset`, with
 `node_min_*` only a floor for a one-character label) — a uniform `minimum width/height` is what
 makes a diagram crowded. Ellipses get a larger inset because an ellipse has proportionally less

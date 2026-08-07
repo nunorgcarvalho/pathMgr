@@ -22,6 +22,7 @@ ever drawn across a node's label.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from ..core.model import Model
@@ -70,6 +71,31 @@ def _arc_midpoint(start, end, rad: float):
     return ((x0 + 2 * control[0] + x1) / 4.0, (y0 + 2 * control[1] + y1) / 4.0)
 
 
+def _mathtext_safe_names(latex_names: dict) -> dict:
+    """Keep only the document names matplotlib can actually typeset.
+
+    ``latex_names`` exists so a figure can call a symbol what the *document* calls it -- usually a
+    macro from the document's own ``macros.sty``, like ``\\VPo``. TikZ output goes to real LaTeX,
+    which has those definitions. matplotlib does not: its mathtext parser knows a fixed set of
+    commands and raises on anything else, so a style that produces a correct ``.tikz`` would blow
+    up mid-``savefig`` with a parse error naming a macro the user never typed into pathmgr.
+
+    So the raster back end falls back to the plain expression for any name it cannot render, and
+    keeps the ones it can. The preview loses a macro; it does not lose the figure.
+    """
+    from matplotlib import mathtext
+
+    parser = mathtext.MathTextParser("path")
+    keep = {}
+    for expression, name in latex_names.items():
+        try:
+            parser.parse(f"${name}$")
+        except Exception:  # noqa: BLE001 - mathtext raises several unrelated types
+            continue
+        keep[expression] = name
+    return keep
+
+
 def draw_on_axes(
     model: Model,
     axes,
@@ -85,6 +111,10 @@ def draw_on_axes(
     from matplotlib.patches import Ellipse, FancyArrowPatch, Rectangle
 
     style = style or DiagramStyle()
+    if style.latex_names:
+        safe = _mathtext_safe_names(style.latex_names)
+        if safe != style.latex_names:
+            style = replace(style, latex_names=safe)
     layout = (layout or Layout()).completed(model)
 
     if highlight is not None:
@@ -288,7 +318,9 @@ def draw_on_axes(
     if caption is None and highlighting:
         labels = {v.name: v.label for v in model.variables if v.label}
         # mathtext has no \\ line break, so render the two-line caption as two lines of text
-        caption = highlight.tex_caption(labels, name=caption_name).replace("\\\\", "\n")
+        caption = highlight.tex_caption(
+            labels, name=caption_name, **style.caption_options()
+        ).replace("\\\\", "\n")
     if caption:
         head, _, tail = caption.partition("\n")
         title = _mathtext(head) + ("\n" + _mathtext(tail) if tail else "")

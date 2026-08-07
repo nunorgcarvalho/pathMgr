@@ -93,12 +93,48 @@ __all__ = [
     "Segment",
     "UntraceableModelError",
     "WrightTracer",
+    "tex",
 ]
 
 BACKWARD = " <- "
 FORWARD = " -> "
 BIDIRECTED = " <-> "
 COPATH = " -- "
+
+
+def tex(expression: sp.Expr, latex_names: dict | None = None) -> str:
+    """``sp.latex``, but rendering named symbols and subexpressions the way a document names them.
+
+    ``latex_names`` maps a sympy expression to the LaTeX that should appear in its place, e.g.
+    ``{V_A0 + V_E: r"\\VPo"}`` when the surrounding writeup has been calling that sum ``\\VPo`` for
+    two pages. Without it a caption renders the sum it was derived from, which is correct and
+    unreadable next to prose using the macro.
+
+    Plain symbols could be done with ``sp.latex(symbol_names=...)`` alone. **Composite**
+    subexpressions cannot, and they are the case that actually came up, so both go through the same
+    route: substitute a placeholder symbol, then name the placeholder. Longest expressions are
+    substituted first, so a key that contains another key still matches -- ``{V_A + V_E: ...}``
+    would otherwise be blocked by a ``{V_A: ...}`` substitution landing first.
+
+    Substitution happens **after** any ``factor()``/``simplify()`` the caller has already done, on
+    the expression it is about to render, so it cannot disturb the algebra: nothing is computed
+    from the result.
+    """
+    if not latex_names:
+        return sp.latex(expression)
+
+    placeholders: dict[sp.Symbol, str] = {}
+    substituted = expression
+    keys = sorted(latex_names, key=lambda k: sp.count_ops(k), reverse=True)
+    for index, key in enumerate(keys):
+        placeholder = sp.Symbol(f"_pmName{index}")
+        replaced = substituted.subs(key, placeholder)
+        if replaced != substituted or substituted == key:
+            placeholders[placeholder] = latex_names[key]
+            substituted = replaced
+    if not placeholders:
+        return sp.latex(expression)
+    return sp.latex(substituted, symbol_names=placeholders)
 
 
 class UntraceableModelError(ValueError):
@@ -281,7 +317,7 @@ class Chain:
         """The chain as math-mode LaTeX, using each variable's label where it has one."""
         return self.COPATH_TEX.join(s.tex_path(labels) for s in self.segments)
 
-    def tex_factors(self, omit_unit: bool = True) -> str:
+    def tex_factors(self, omit_unit: bool = True, latex_names: dict | None = None) -> str:
         """The contribution as the PRODUCT being formed, before it is multiplied out.
 
         ``\\frac{1}{2} \\cdot \\beta_{0} \\cdot \\mu \\cdot \\beta_{0} \\cdot \\frac{1}{2}`` --
@@ -297,25 +333,40 @@ class Chain:
             return "1"
         rendered = []
         for factor in factors:
-            text = sp.latex(factor)
+            text = tex(factor, latex_names)
             if isinstance(factor, sp.Add) or (factor.is_number and factor < 0):
                 text = f"\\left({text}\\right)"
             rendered.append(text)
         return r" \cdot ".join(rendered)
 
-    def tex_contribution(self, factored: bool = True) -> str:
+    def tex_contribution(
+        self, factored: bool = True, omit_unit: bool = True, latex_names: dict | None = None
+    ) -> str:
         """``<product> = <value>`` -- the arithmetic and its result in one line."""
         value = sp.factor(self.contribution) if factored else self.contribution
-        return f"{self.tex_factors()} = {sp.latex(value)}"
+        product = self.tex_factors(omit_unit=omit_unit, latex_names=latex_names)
+        return f"{product} = {tex(value, latex_names)}"
 
-    def tex_caption(self, labels: dict[str, str] | None = None, name: str | None = None) -> str:
+    def tex_caption(
+        self,
+        labels: dict[str, str] | None = None,
+        name: str | None = None,
+        omit_unit: bool = True,
+        latex_names: dict | None = None,
+    ) -> str:
         """A two-line caption: the Wright chain, then the product it contributes.
 
         ``name`` prefixes the second line, e.g. ``\\operatorname{Cov}[a, b]``, when the chain is
         the whole covariance rather than one term of it.
+
+        ``omit_unit`` and ``latex_names`` exist so the caption can be made to agree with the
+        diagram above it and with the document around it. They are plain arguments rather than a
+        ``DiagramStyle`` because :mod:`pathmgr.core` may not import :mod:`pathmgr.render`; the
+        render layer reads them off the style and passes them in. See
+        :meth:`pathmgr.render.style.DiagramStyle.caption_options`.
         """
         head = self.tex_path(labels)
-        body = self.tex_contribution()
+        body = self.tex_contribution(omit_unit=omit_unit, latex_names=latex_names)
         if name:
             body = f"{name} = {body}"
         return f"{head}\\\\{body}"

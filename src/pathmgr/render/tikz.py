@@ -259,7 +259,9 @@ def to_tikz(
             name = None
             if caption_name:
                 name = caption_name
-            caption = highlight.tex_caption(labels, name=name)
+            caption = highlight.tex_caption(
+                labels, name=name, **style.caption_options()
+            )
         if caption:
             # A caption may be two lines -- the Wright chain, then the product it contributes.
             # `\\` is illegal INSIDE math mode, so each line gets its own $...$ and the break
