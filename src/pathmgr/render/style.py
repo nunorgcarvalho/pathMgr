@@ -249,6 +249,18 @@ class DiagramStyle:
     leader_width: float = 0.3
     leader_colour: str = "#777777"
 
+    # -- coefficient coding -------------------------------------------------------------
+    #: lift a coefficient that appears on many edges off those edges and into the legend, coding it
+    #: as a colour + dash pattern instead. **Off by default**: it changes a dense figure by design,
+    #: and doing that silently to every existing figure is not acceptable.
+    code_repeated_coefficients: bool = False
+    #: how many edges a coefficient must appear on before it is worth coding
+    coefficient_code_threshold: int = 5
+    #: coding is additionally suppressed while a chain is highlighted, because a highlighted figure
+    #: exists to let a reader multiply along the chain edge by edge -- removing the factors is
+    #: exactly wrong there. Set True to override for a figure that wants both.
+    code_with_highlight: bool = False
+
     # -- edge routing ------------------------------------------------------------------
     #: bends (TikZ degrees) to try for an edge that would otherwise cross a third node.
     #: 0 first, so an edge with a clear path is never touched and clean figures do not change.
@@ -277,6 +289,26 @@ class DiagramStyle:
             return self.label_overrides[reversed_key]
         return coefficient_label(
             value, omit_unit=not self.show_unit_coefficients, latex_names=self.latex_names
+        )
+
+    def coefficient_coding(self, model, highlighting: bool = False):
+        """The coefficient coding for ``model`` under this style, or an empty one.
+
+        Edges with an explicit ``label_overrides`` entry are exempt: an override is a deliberate
+        statement about that one edge, and silently eliding it would override the override.
+        """
+        from .coding import CoefficientCoding, code_coefficients
+
+        if not self.code_repeated_coefficients:
+            return CoefficientCoding()
+        if highlighting and not self.code_with_highlight:
+            return CoefficientCoding()
+        exempt = frozenset(self.label_overrides)
+        return code_coefficients(
+            model,
+            threshold=self.coefficient_code_threshold,
+            exempt=exempt,
+            omit_unit=not self.show_unit_coefficients,
         )
 
     def caption_options(self) -> dict:

@@ -43,6 +43,7 @@ from .style import DiagramStyle
 
 __all__ = [
     "ARROW_LIBRARY",
+    "coefficient_legend_tikz",
     "TIKZ_LIBRARIES",
     "TikzCompileError",
     "required_libraries",
@@ -144,6 +145,44 @@ def _preamble(style: DiagramStyle, colours: "_Colours", leaders: bool = False) -
     ]
 
 
+def coefficient_legend_tikz(
+    model: Model, style: DiagramStyle | None = None, highlighting: bool = False
+) -> str:
+    """A standalone ``tikzpicture`` decoding the coefficient colours, or ``""`` if none were coded.
+
+    Emitted **separately** from the diagram rather than inside it, because where a legend belongs
+    is the document's call, not the library's: one of these figures is a ``sidewaysfigure`` on its
+    own landscape page. ``to_tikz(..., coefficient_legend=True)`` inlines it for callers who want
+    it in the picture; this is the block that does the work either way.
+
+    Every row is derived from :attr:`CoefficientCoding.coded` -- what was *actually* elided -- so
+    the legend cannot describe a figure other than the one drawn. ``style.py`` records a real
+    incident where a caption contradicted the diagram above it; here the consequence would be worse,
+    because the legend is the only remaining way to recover the coefficient.
+    """
+    style = style or DiagramStyle()
+    coding = style.coefficient_coding(model, highlighting=highlighting)
+    if not coding:
+        return ""
+    colours = _Colours()
+    rows: list[str] = []
+    for index, (kind, colour, dash, latex) in enumerate(coding.legend_entries()):
+        y = -0.55 * index
+        tip = style.arrow_tip_directed if kind == "directed" else style.arrow_tip_bidirected
+        rows.append(
+            f"  \\draw[{tip}, line width={style.directed_width}pt, "
+            f"draw={colours.name(colour)}, {_dash_option(dash)}] "
+            f"(0,{y:.2f}) -- (1.1,{y:.2f});"
+        )
+        rows.append(
+            f"  \\node[anchor=west, font=\\{style.font_size}] at (1.3,{y:.2f}) "
+            f"{{$\\mathrm{{{'path' if kind == 'directed' else 'cov'}}}\\;{latex}$}};"
+        )
+    return "\n".join(
+        [*colours.declarations(), "\\begin{tikzpicture}", *rows, "\\end{tikzpicture}"]
+    )
+
+
 def to_tikz(
     model: Model,
     layout: Layout | None = None,
@@ -153,6 +192,7 @@ def to_tikz(
     caption: str | None = None,
     caption_name: str | None = None,
     scale: float = 1.0,
+    coefficient_legend: bool = False,
 ) -> str:
     """A bare ``tikzpicture`` for ``model``.
 
@@ -175,7 +215,8 @@ def to_tikz(
 
     colours = _Colours()
     lines: list[str] = []
-    placements = place_labels(model, layout, style, labelled_edges(model, style))
+    coding = style.coefficient_coding(model, highlighting=highlighting)
+    placements = place_labels(model, layout, style, labelled_edges(model, style, coding))
     leaders = sorted(
         (key, placement)
         for key, placement in placements.items()
@@ -199,10 +240,11 @@ def to_tikz(
     # -- directed paths ----------------------------------------------------------------
     for edge in model.directed_edges:
         hot = (edge.src, edge.dst) in hot_directed
+        coded = coding.for_edge("directed", (edge.src, edge.dst))
         options = _edge_options(
-            "pmDirected", style.directed_colour, style, hot, highlighting, colours
+            "pmDirected", style.directed_colour, style, hot, highlighting, colours, coded
         )
-        label = style.edge_label((edge.src, edge.dst), edge.coeff)
+        label = "" if coded is not None else style.edge_label((edge.src, edge.dst), edge.coeff)
         node = _label_node(
             label, style, hot, highlighting, colours,
             placements.get((edge.src, edge.dst)), _direction(layout, edge.src, edge.dst),
@@ -220,10 +262,11 @@ def to_tikz(
         # a style flag governs CONTEXT; it never suppresses a highlighted edge
         if edge.is_variance and not style.draws_variance(hot):
             continue
+        coded = coding.for_edge("bidirected", (edge.a, edge.b))
         options = _edge_options(
-            "pmBidirected", style.bidirected_colour, style, hot, highlighting, colours
+            "pmBidirected", style.bidirected_colour, style, hot, highlighting, colours, coded
         )
-        label = style.edge_label((edge.a, edge.b), edge.value)
+        label = "" if coded is not None else style.edge_label((edge.a, edge.b), edge.value)
         loop = placements.get((edge.a, edge.a)) if edge.is_variance else None
         key = (edge.a, edge.a) if edge.is_variance else (edge.a, edge.b)
         node = _label_node(
@@ -304,7 +347,12 @@ def to_tikz(
     body.append("\\end{tikzpicture}")
     lines.extend(colours.declarations())
     lines.extend(body)
-    return "\n".join(lines) + "\n"
+    out = "\n".join(lines) + "\n"
+    if coefficient_legend:
+        legend = coefficient_legend_tikz(model, style, highlighting=highlighting)
+        if legend:
+            out += "\n" + legend + "\n"
+    return out
 
 
 def _bend_connector(bend: float) -> str:
@@ -324,6 +372,14 @@ def _direction(layout: Layout, a: str, b: str) -> tuple[float, float]:
     return (bx - ax, by - ay)
 
 
+def _dash_option(dash: tuple[float, ...]) -> str:
+    """A TikZ ``dash pattern`` from alternating on/off runs in pt."""
+    runs = []
+    for index, length in enumerate(dash):
+        runs.append(f"{'on' if index % 2 == 0 else 'off'} {length:g}pt")
+    return "dash pattern=" + " ".join(runs)
+
+
 def _edge_options(
     base: str,
     colour: str,
@@ -331,14 +387,25 @@ def _edge_options(
     hot: bool,
     highlighting: bool,
     colours: "_Colours",
+    coded=None,
 ) -> str:
+    """Draw options for one edge, including any coefficient coding.
+
+    Precedence, decided deliberately: **highlighting wins on colour and width** so a chain still
+    reads as the chain, but **the dash pattern survives both highlight and fade**. That is the
+    payoff of coding on two channels -- coefficient identity is not erased by the act of studying a
+    chain, nor by being pushed into the background.
+    """
+    dash = f", {_dash_option(coded.dash)}" if coded is not None else ""
     if hot:
         return (
             f"{base}, draw={colours.name(style.highlight_colour)}, "
-            f"line width={_hot_width(base, style):.2f}pt"
+            f"line width={_hot_width(base, style):.2f}pt{dash}"
         )
     if highlighting and style.fade_unhighlighted:
-        return f"{base}, draw={colours.name(style.faded_colour)}"
+        return f"{base}, draw={colours.name(style.faded_colour)}{dash}"
+    if coded is not None:
+        return f"{base}, draw={colours.name(coded.colour)}{dash}"
     return f"{base}, draw={colours.name(colour)}"
 
 

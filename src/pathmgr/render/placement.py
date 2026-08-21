@@ -311,7 +311,7 @@ def label_rect(
 
 
 def labelled_edges(
-    model: Model, style: DiagramStyle
+    model: Model, style: DiagramStyle, coding=None
 ) -> list[tuple[tuple[str, str], str, float, str]]:
     """The edges that carry a label, in a fixed draw order, as ``(key, text, bow, kind)``.
 
@@ -324,11 +324,21 @@ def labelled_edges(
     sitting on its own loop's arc is the most visible defect in a crowded figure.
     """
     out: list[tuple[tuple[str, str], str, float, str]] = []
+
+    def coded(kind: str, key: tuple[str, str]) -> bool:
+        # an edge whose coefficient moved into the legend draws no label, so placement must not
+        # reserve room for one -- that space is the whole point of coding it
+        return coding is not None and coding.for_edge(kind, key) is not None
+
     for edge in model.directed_edges:
+        if coded("directed", (edge.src, edge.dst)):
+            continue
         text = style.edge_label((edge.src, edge.dst), edge.coeff)
         if text:
             out.append(((edge.src, edge.dst), text, 0.0, "directed"))
     for edge in model.bidirected_edges:
+        if coded("bidirected", (edge.a, edge.b)):
+            continue
         if edge.is_variance:
             if not style.draws_variance(False):
                 continue

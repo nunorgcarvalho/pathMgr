@@ -1172,3 +1172,200 @@ def test_leaders_can_be_switched_off():
     model, layout = _oversized_label_model(), _oversized_layout()
     tex = to_tikz(model, layout=layout, style=DiagramStyle(leader_lines=False))
     assert "pmLeader" not in tex
+
+
+# ======================================================================================
+# coefficient coding: colour + dash + legend (task-20260821-161359, item 1)
+# ======================================================================================
+def _repeated_coefficient_model(n: int = 6):
+    """``n`` edges sharing one coefficient, plus a couple that do not."""
+    lines = ["positive: V"]
+    for i in range(n):
+        lines += [f"x{i} ~~ V*x{i}", f"y ~ 1/2*x{i}" if i == 0 else f"y{i} ~ 1/2*x{i}"]
+    lines += ["z ~ 7*x0", "w ~ 9*x1"]
+    return pm.from_text("\n".join(lines))
+
+
+def _coding_style(**kwargs):
+    return DiagramStyle(code_repeated_coefficients=True, **kwargs)
+
+
+def test_coding_is_off_by_default_and_output_is_unchanged():
+    """It changes a dense figure by design; doing that silently to every figure is not acceptable."""
+    model = _repeated_coefficient_model()
+    assert not DiagramStyle().coefficient_coding(model)
+    assert to_tikz(model) == to_tikz(model, style=DiagramStyle())
+    assert "dash pattern" not in to_tikz(model)
+
+
+def test_a_repeated_coefficient_is_lifted_off_the_edges():
+    model = _repeated_coefficient_model(n=6)
+    coding = _coding_style().coefficient_coding(model)
+    assert coding, "nothing coded"
+    values = {str(entry.value) for entry in coding.coded}
+    assert "1/2" in values
+    tex = to_tikz(model, style=_coding_style())
+    assert "dash pattern" in tex
+    # the coded edges no longer carry their label
+    assert tex.count("\\frac{1}{2}") == 0, tex
+
+
+def test_below_the_threshold_nothing_is_coded():
+    model = _repeated_coefficient_model(n=3)
+    assert not _coding_style(coefficient_code_threshold=5).coefficient_coding(model)
+    assert _coding_style(coefficient_code_threshold=3).coefficient_coding(model)
+
+
+def test_coding_keys_on_the_value_and_never_on_the_edge_type():
+    """The consumer asked for this explicitly, and they were right to.
+
+    Eight self-loops that happen to share a value may be coded together; eight that merely share
+    *being self-loops* must not, or the figure states one number for several different ones -- a
+    wrong figure, not an ugly one.
+    """
+    lines = ["positive: V"]
+    # six self-loops, each with a DIFFERENT variance
+    for i in range(6):
+        lines.append(f"x{i} ~~ V{i}*x{i}")
+    lines.append("y ~ x0 + x1")
+    model = pm.from_text("\n".join(lines))
+    assert not _coding_style().coefficient_coding(model), (
+        "self-loops with different values were grouped -- that would state one number for six"
+    )
+
+    # and the same six sharing one value ARE coded
+    same = pm.from_text("\n".join(["positive: V", *[f"x{i} ~~ V*x{i}" for i in range(6)], "y ~ x0 + x1"]))
+    assert _coding_style().coefficient_coding(same)
+
+
+def test_directed_and_bidirected_are_coded_separately():
+    """A 1/2 path coefficient and a 1/2 covariance are different claims."""
+    lines = ["positive: V"]
+    lines += [f"a{i} ~~ (1/2)*a{i}" for i in range(5)]
+    lines += [f"b{i} ~ 1/2*a{i}" for i in range(5)]
+    model = pm.from_text("\n".join(lines))
+    coding = _coding_style().coefficient_coding(model)
+    kinds = {entry.kind for entry in coding.coded}
+    assert kinds == {"directed", "bidirected"}, kinds
+    appearances = {(e.colour, e.dash) for e in coding.coded}
+    assert len(appearances) == 2, "the two kinds must not share an appearance"
+
+
+def test_every_coded_appearance_survives_greyscale():
+    """Colour alone would be strictly worse than today: the label is gone and the hue is not.
+
+    The dash is the channel that survives printing, photocopying and a colourblind reader, so
+    every code must be non-solid AND distinct from every other code's dash.
+    """
+    lines = ["positive: V"]
+    for group, coeff in enumerate(("1/2", "1/3", "1/5", "1/7")):
+        lines += [f"n{group}_{i} ~ {coeff}*src{group}" for i in range(5)]
+        lines.append(f"src{group} ~~ V*src{group}")
+    coding = _coding_style().coefficient_coding(pm.from_text("\n".join(lines)))
+    assert len(coding.coded) >= 4
+    dashes = [entry.dash for entry in coding.coded]
+    assert all(dash for dash in dashes), "a solid code is indistinguishable from an ordinary edge"
+    assert len(set(dashes)) == len(dashes), f"two codes share a dash pattern: {dashes}"
+
+
+def test_the_palette_avoids_the_colours_that_already_mean_something():
+    from pathmgr.render.coding import PALETTE
+
+    style = DiagramStyle()
+    reserved = {style.copath_colour.upper(), style.highlight_colour.upper(),
+                style.faded_colour.upper()}
+    assert not reserved & {c.upper() for c in PALETTE}
+
+
+def test_assignment_is_stable_when_the_model_grows():
+    """Determinism is the standing rule; stability is the one this feature needs.
+
+    Adding an edge must not reshuffle the other coefficients' appearances, or every figure in the
+    writeup churns on an unrelated change.
+    """
+    base = _repeated_coefficient_model(n=6)
+    before = {
+        (e.kind, str(e.value)): (e.colour, e.dash)
+        for e in _coding_style().coefficient_coding(base).coded
+    }
+    grown = _repeated_coefficient_model(n=6)
+    for i in range(5):  # a whole new coefficient crossing the threshold
+        grown.add_var(f"q{i}")
+        grown.add_path("x0", f"q{i}", sp.Rational(1, 9))
+    after = {
+        (e.kind, str(e.value)): (e.colour, e.dash)
+        for e in _coding_style().coefficient_coding(grown).coded
+    }
+    for key, appearance in before.items():
+        assert after[key] == appearance, f"{key} was reshuffled by an unrelated addition"
+    assert len(after) > len(before), "the new coefficient should itself be coded"
+
+
+def test_coding_is_deterministic():
+    model = _repeated_coefficient_model()
+    first = to_tikz(model, style=_coding_style())
+    for _ in range(3):
+        assert to_tikz(model, style=_coding_style()) == first
+
+
+def test_coding_does_not_fire_while_a_chain_is_highlighted():
+    """That figure's whole job is letting a reader multiply along the chain, factor by factor."""
+    model = _repeated_coefficient_model()
+    style = _coding_style()
+    assert not style.coefficient_coding(model, highlighting=True)
+    assert _coding_style(code_with_highlight=True).coefficient_coding(model, highlighting=True)
+
+
+def test_an_explicitly_overridden_label_is_never_coded_away():
+    """An override is a deliberate statement about one edge; eliding it would override the override."""
+    model = _repeated_coefficient_model(n=6)
+    plain = _coding_style().coefficient_coding(model)
+    coded_edges = {edge for entry in plain.coded for edge in entry.edges}
+    victim = sorted(coded_edges)[0]
+    with_override = _coding_style(label_overrides={victim: r"\text{kept}"})
+    after = with_override.coefficient_coding(model)
+    assert all(victim not in entry.edges for entry in after.coded), victim
+
+
+def test_a_unit_coefficient_that_is_already_hidden_is_not_coded():
+    """Coding it would dash two dozen edges to remove a label nobody was drawing."""
+    model = pm.from_text("\n".join(["positive: V", *[f"y{i} ~ 1*x{i}" for i in range(6)],
+                                    *[f"x{i} ~~ V*x{i}" for i in range(6)]]))
+    coding = _coding_style().coefficient_coding(model)
+    assert all(entry.value != 1 for entry in coding.coded), [str(e) for e in coding.coded]
+
+
+def test_the_legend_is_derived_from_what_was_actually_elided():
+    """A legend that disagrees with the diagram is worse here than in a caption: it is the only
+    remaining way to recover the coefficient."""
+    from pathmgr.render.tikz import coefficient_legend_tikz
+
+    model = _repeated_coefficient_model()
+    style = _coding_style()
+    coding = style.coefficient_coding(model)
+    legend = coefficient_legend_tikz(model, style)
+    assert legend
+    # one row per coded coefficient, and every coded value appears
+    for entry in coding.coded:
+        assert sp.latex(entry.value) in legend, entry
+        assert entry.colour.lstrip("#").upper() in legend
+    assert legend.count("\\draw[") == len(coding.coded)
+
+
+def test_no_coding_means_no_legend():
+    from pathmgr.render.tikz import coefficient_legend_tikz
+
+    model = _repeated_coefficient_model(n=2)
+    assert coefficient_legend_tikz(model, _coding_style()) == ""
+
+
+def test_every_coded_coefficient_remains_recoverable():
+    """The acceptance bar: figure plus legend must reconstruct the full model."""
+    from pathmgr.render.tikz import coefficient_legend_tikz
+
+    model = _repeated_coefficient_model()
+    style = _coding_style()
+    coding = style.coefficient_coding(model)
+    legend = coefficient_legend_tikz(model, style)
+    for entry in coding.coded:
+        assert sp.latex(entry.value) in legend, f"{entry} is neither drawn nor decodable"

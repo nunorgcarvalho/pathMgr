@@ -103,7 +103,10 @@ def collision_report(
     """
     style = style or DiagramStyle()
     layout = layout.completed(model)
-    edges = labelled_edges(model, style)
+    # the coding removes labels, so the metric must be built with it -- otherwise it scores labels
+    # that are not drawn and reports collisions the reader will never see
+    coding = style.coefficient_coding(model)
+    edges = labelled_edges(model, style, coding)
     placements = place_labels(model, layout, style, edges)
     loop_choices = {
         key[0]: (p.loop_direction, p.loop_looseness)

@@ -127,16 +127,23 @@ def draw_on_axes(
     hot_directed, hot_bidirected, hot_copaths = hot
     highlighting = highlight is not None
 
-    placements = place_labels(model, layout, style, labelled_edges(model, style))
+    coding = style.coefficient_coding(model, highlighting=highlighting)
+    placements = place_labels(model, layout, style, labelled_edges(model, style, coding))
     bends = route_edges(model, layout, style) if style.route_edges_around_nodes else {}
     rects = {name: node_rect(name, model, layout, style) for name in model.names}
 
-    def colour_for(default: str, is_hot: bool) -> str:
+    def colour_for(default: str, is_hot: bool, coded=None) -> str:
         if is_hot:
             return style.highlight_colour
         if highlighting and style.fade_unhighlighted:
             return style.faded_colour
+        if coded is not None:
+            return coded.colour
         return default
+
+    def dashes_for(coded):
+        """matplotlib dash sequence, in points. Survives highlight and fade, like the TikZ side."""
+        return None if coded is None else list(coded.dash)
 
     def width_for(base: float, is_hot: bool) -> float:
         return base * (style.highlight_scale if is_hot else 1.0)
@@ -197,6 +204,7 @@ def draw_on_axes(
     # -- edges, above the node fills ----------------------------------
     for edge in model.directed_edges:
         is_hot = (edge.src, edge.dst) in hot_directed
+        coded = coding.for_edge("directed", (edge.src, edge.dst))
         start = boundary_point(
             layout[edge.src], layout[edge.dst], rects[edge.src], style.node_clearance
         )
@@ -214,23 +222,27 @@ def draw_on_axes(
                 shrinkA=0,
                 shrinkB=0,
                 linewidth=width_for(style.directed_width, is_hot),
-                color=colour_for(style.directed_colour, is_hot),
+                color=colour_for(style.directed_colour, is_hot, coded),
+                linestyle=(0, dashes_for(coded)) if coded is not None else "solid",
                 zorder=2,
             )
         )
-        draw_label(
-            (edge.src, edge.dst),
-            style.edge_label((edge.src, edge.dst), edge.coeff),
-            is_hot,
-        )
+        if coded is None:
+            draw_label(
+                (edge.src, edge.dst),
+                style.edge_label((edge.src, edge.dst), edge.coeff),
+                is_hot,
+            )
 
     for edge in model.bidirected_edges:
         is_hot = frozenset((edge.a, edge.b)) in hot_bidirected
         if edge.is_variance and not style.draws_variance(is_hot):
             continue
-        colour = colour_for(style.bidirected_colour, is_hot)
+        coded = coding.for_edge("bidirected", (edge.a, edge.b))
+        colour = colour_for(style.bidirected_colour, is_hot, coded)
         width = width_for(style.bidirected_width, is_hot)
-        text = style.edge_label((edge.a, edge.b), edge.value)
+        dashes = dashes_for(coded)
+        text = "" if coded is not None else style.edge_label((edge.a, edge.b), edge.value)
         if edge.is_variance:
             x, y = layout[edge.a]
             top = y + rects[edge.a].height / 2
@@ -259,6 +271,7 @@ def draw_on_axes(
                     mutation_scale=style.arrow_head_size * 0.6,
                     linewidth=width,
                     color=colour,
+                    linestyle=(0, dashes) if dashes else "solid",
                     zorder=2,
                 )
             )
@@ -284,6 +297,7 @@ def draw_on_axes(
                     shrinkB=0,
                     linewidth=width,
                     color=colour,
+                    linestyle=(0, dashes) if dashes else "solid",
                     zorder=2,
                 )
             )
