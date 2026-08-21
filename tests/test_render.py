@@ -1369,3 +1369,139 @@ def test_every_coded_coefficient_remains_recoverable():
     legend = coefficient_legend_tikz(model, style)
     for entry in coding.coded:
         assert sp.latex(entry.value) in legend, f"{entry} is neither drawn nor decodable"
+
+
+# ======================================================================================
+# a moved self-loop must not be erased by its own label (task-20260821-172715)
+# ======================================================================================
+def _moved_loop_model():
+    """A node whose loop must leave `above`, because something is directly above it."""
+    return pm.from_text(
+        """
+        latent: g
+        positive: V_A, V_E
+        y ~ g
+        y ~~ V_E*y
+        g ~~ V_A*g
+        """
+    )
+
+
+def _moved_loop_layout():
+    # y directly ABOVE g: `loop above` would put g's label on the y box, so it has to move
+    return Layout({"y": (0.0, 1.3), "g": (0.0, 0.0)})
+
+
+def _emitted_loop_labels(tex: str):
+    """Coordinates of every label emitted at an absolute position."""
+    import re
+
+    return [
+        (float(m.group(1)), float(m.group(2)))
+        for m in re.finditer(r"\\node\[pmLabelAt[^\]]*\] at \(([-\d.]+),([-\d.]+)\)", tex)
+    ]
+
+
+def test_a_moved_loop_carries_no_in_path_label():
+    """THE regression. TikZ puts an in-path label at `midway`, which for a loop is ON the arc --
+    and pmLabel is filled white, so the label erases the loop it annotates. The broken output
+    compiles with zero errors, scores clean on the collision metric, and is stable under the
+    determinism test: three checks that all pass while the figure is visibly wrong.
+
+    So this asserts the emitted artefact instead: a moved loop's draw carries no node.
+    """
+    tex = to_tikz(_moved_loop_model(), layout=_moved_loop_layout(), style=DiagramStyle())
+    moved = [line for line in tex.splitlines() if "to[loop," in line]
+    assert moved, "expected at least one moved loop in this layout"
+    for line in moved:
+        assert "node[" not in line, f"in-path label on a moved loop will erase it: {line}"
+    assert "pmLabelAt" in tex, "the moved loop's label was dropped rather than repositioned"
+
+
+def test_the_emitted_loop_label_is_where_placement_put_it():
+    """Not "placement computed a good point" -- that was already true and the figure still broke.
+    This checks the number that actually reaches the file."""
+    from pathmgr.render.placement import labelled_edges as build, place_labels
+
+    model, layout = _moved_loop_model(), _moved_loop_layout()
+    style = DiagramStyle()
+    full = layout.completed(model)
+    placements = place_labels(model, full, style, build(model, style))
+    moved = {k: p for k, p in placements.items() if k[0] == k[1] and p.loop_direction is not None}
+    assert moved, "no loop moved"
+
+    emitted = sorted(_emitted_loop_labels(to_tikz(model, layout=layout, style=style)))
+    wanted = sorted((round(p.point[0], 3), round(p.point[1], 3)) for p in moved.values())
+    assert emitted == wanted, f"emitted {emitted}, placement said {wanted}"
+
+
+def test_the_emitted_loop_label_clears_the_emitted_loop_arc():
+    """The property that actually matters, checked against the coordinates in the output."""
+    import re
+
+    from pathmgr.render.placement import (
+        LOOP_HALF_ANGLE,
+        EdgePath,
+        label_rect,
+        labelled_edges as build,
+        loop_path,
+        node_rect,
+    )
+
+    model, layout = _moved_loop_model(), _moved_loop_layout()
+    style = DiagramStyle()
+    full = layout.completed(model)
+    tex = to_tikz(model, layout=layout, style=style)
+    texts = {key: text for key, text, _b, kind in build(model, style) if kind == "variance"}
+    points = _emitted_loop_labels(tex)
+    checked = 0
+    for line in tex.splitlines():
+        match = re.search(r"\((\w+)\) to\[loop, looseness=([\d.]+), in=(\d+), out=(\d+)\]", line)
+        if not match:
+            continue
+        node, looseness, _in_angle, out_angle = match.groups()
+        direction = (float(out_angle) + LOOP_HALF_ANGLE) % 360
+        arc = EdgePath((node, node), "variance", loop_path(
+            full[node], node_rect(node, model, full, style), direction, float(looseness)
+        ))
+        for point in points:
+            covered = arc.length_inside(label_rect(point, texts[(node, node)], style))
+            assert covered == 0.0, f"{node}: emitted label covers {covered:.3f}cm of its own arc"
+        checked += 1
+    assert checked, "no moved loop found to check"
+
+
+def test_the_raster_back_end_puts_the_loop_label_in_the_same_place():
+    """The two back ends draw loops independently, so the same defect could exist in either."""
+    from pathmgr.render.placement import labelled_edges as build, place_labels
+
+    model, layout = _moved_loop_model(), _moved_loop_layout()
+    style = DiagramStyle()
+    full = layout.completed(model)
+    placements = place_labels(model, full, style, build(model, style))
+    moved = [p for k, p in placements.items() if k[0] == k[1] and p.loop_direction is not None]
+    assert moved
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from pathmgr.render.raster import draw_on_axes
+
+    figure, axes = plt.subplots()
+    try:
+        draw_on_axes(model, axes, layout=full, style=style)
+        drawn = {(round(t.get_position()[0], 3), round(t.get_position()[1], 3)) for t in axes.texts}
+    finally:
+        plt.close(figure)
+    wanted = {(round(p.point[0], 3), round(p.point[1], 3)) for p in moved}
+    assert wanted & drawn, f"raster drew no label at the placement point; wanted {wanted}"
+
+
+def test_an_unmoved_loop_still_emits_the_legacy_in_path_label():
+    """Byte-identity where nothing moved: the fix must not churn every figure with a loop."""
+    model = pm.from_text("positive: V\na ~~ V*a\nb ~ 2*a\nb ~~ V*b")
+    tex = to_tikz(model, layout=Layout({"a": (0.0, 0.0), "b": (4.0, 0.0)}))
+    assert "to[loop above, looseness=6, in=120, out=60] node[pmLabel]" in tex
+    assert "pmLabelAt" not in tex

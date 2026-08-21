@@ -113,7 +113,12 @@ class _Colours:
         ]
 
 
-def _preamble(style: DiagramStyle, colours: "_Colours", leaders: bool = False) -> list[str]:
+def _preamble(
+    style: DiagramStyle,
+    colours: "_Colours",
+    leaders: bool = False,
+    absolute_labels: bool = False,
+) -> list[str]:
     return [
         "\\begin{tikzpicture}[",
         f"  every node/.style={{font=\\{style.font_size}}},",
@@ -133,6 +138,11 @@ def _preamble(style: DiagramStyle, colours: "_Colours", leaders: bool = False) -
         # NO arrow tips on a co-path -- that is the whole point
         f"  pmCopath/.style={{line width={style.copath_width}pt}},",
         "  pmLabel/.style={midway, fill=white, inner sep=1pt},",
+        *(
+            ["  pmLabelAt/.style={fill=white, inner sep=1pt},"]
+            if absolute_labels
+            else []
+        ),
         *(
             [
                 f"  pmLeader/.style={{line width={style.leader_width}pt, "
@@ -222,7 +232,13 @@ def to_tikz(
         for key, placement in placements.items()
         if placement.leader_to is not None
     )
-    body = _preamble(style, colours, leaders=bool(leaders))
+    moved_loops = any(
+        key[0] == key[1] and placement.loop_direction is not None
+        for key, placement in placements.items()
+    )
+    body = _preamble(
+        style, colours, leaders=bool(leaders), absolute_labels=moved_loops
+    )
     emitted_labels: set[str] = set()
     # bend only the edges whose straight path would run through a third node; everything else is
     # left exactly as it was, so a figure with no crossings is byte-identical to before routing
@@ -269,7 +285,8 @@ def to_tikz(
         label = "" if coded is not None else style.edge_label((edge.a, edge.b), edge.value)
         loop = placements.get((edge.a, edge.a)) if edge.is_variance else None
         key = (edge.a, edge.a) if edge.is_variance else (edge.a, edge.b)
-        node = _label_node(
+        moved_loop = edge.is_variance and loop is not None
+        node = "" if moved_loop else _label_node(
             label, style, hot, highlighting, colours,
             loop if edge.is_variance else placements.get((edge.a, edge.b)),
             None if edge.is_variance else _direction(layout, edge.a, edge.b),
@@ -280,6 +297,22 @@ def to_tikz(
                 f"  \\draw[{options}] ({_node_id(edge.a)}) {_loop_connector(loop)} "
                 f"{node}({_node_id(edge.a)});"
             )
+            if moved_loop and label:
+                # An ABSOLUTE node, not one on the path. TikZ puts an in-path label at `midway`,
+                # which for a loop is on the arc -- and `pmLabel` is filled white, so it erases the
+                # very loop it annotates: a broken arc with a detached arrowhead. The placement
+                # pass already chose a point clear of the arc; this is what actually uses it.
+                body.append(
+                    "  \\node["
+                    + ", ".join(
+                        _absolute_label_options(
+                            style, hot, highlighting, colours,
+                            _leader_name(leaders, key, emitted_labels),
+                        )
+                    )
+                    + f"] at ({loop.point[0]:.3f},{loop.point[1]:.3f}) "
+                    + "{$" + label + "$};"
+                )
         else:
             body.append(
                 f"  \\draw[{options}] ({_node_id(edge.a)}) to[bend left="
@@ -451,6 +484,24 @@ def _leader_name(leaders, key, emitted: set[str] | None = None) -> str | None:
                 emitted.add(name)
             return name
     return None
+
+
+def _absolute_label_options(
+    style: DiagramStyle,
+    hot: bool,
+    highlighting: bool,
+    colours: "_Colours",
+    name: str | None,
+) -> list[str]:
+    """Options for a label placed at a coordinate rather than along a path."""
+    options = ["pmLabelAt"]
+    if name is not None:
+        options.append(f"name={name}")
+    if hot:
+        options.append(f"text={colours.name(style.highlight_colour)}")
+    elif highlighting and style.fade_unhighlighted:
+        options.append(f"text={colours.name(style.faded_colour)}")
+    return options
 
 
 def _label_node(
