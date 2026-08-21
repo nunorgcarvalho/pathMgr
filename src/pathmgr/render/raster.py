@@ -22,12 +22,15 @@ ever drawn across a node's label.
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 from pathlib import Path
 
 from ..core.model import Model
 from .layout import Layout
 from .placement import (
+    DEFAULT_LOOP_DIRECTION,
+    DEFAULT_LOOP_LOOSENESS,
     boundary_point,
     labelled_edges,
     node_rect,
@@ -232,11 +235,26 @@ def draw_on_axes(
             x, y = layout[edge.a]
             top = y + rects[edge.a].height / 2
             radius = max(0.16, rects[edge.a].height * 0.4)
+            # A loop that had no reason to move keeps the drawing it has always had. One that did
+            # move is the SAME construction rotated about the node centre, so the default
+            # (direction 90, looseness 6) is reproduced exactly rather than approximated.
+            loop = placements.get((edge.a, edge.a))
+            direction = DEFAULT_LOOP_DIRECTION if loop is None or loop.loop_direction is None else loop.loop_direction
+            looseness = DEFAULT_LOOP_LOOSENESS if loop is None or loop.loop_looseness is None else loop.loop_looseness
+            turn = math.radians(direction - DEFAULT_LOOP_DIRECTION)
+
+            def spun(point, cx=x, cy=y, angle=turn):
+                dx, dy = point[0] - cx, point[1] - cy
+                return (
+                    cx + dx * math.cos(angle) - dy * math.sin(angle),
+                    cy + dx * math.sin(angle) + dy * math.cos(angle),
+                )
+
             axes.add_patch(
                 FancyArrowPatch(
-                    (x - radius, top),
-                    (x + radius, top),
-                    connectionstyle="arc3,rad=-1.7",
+                    spun((x - radius, top)),
+                    spun((x + radius, top)),
+                    connectionstyle=f"arc3,rad={-1.7 * looseness / DEFAULT_LOOP_LOOSENESS}",
                     arrowstyle="<|-|>",
                     mutation_scale=style.arrow_head_size * 0.6,
                     linewidth=width,
@@ -244,7 +262,9 @@ def draw_on_axes(
                     zorder=2,
                 )
             )
-            draw_label((edge.a, edge.a), text, is_hot, fallback=(x, top + radius * 1.75))
+            draw_label(
+                (edge.a, edge.a), text, is_hot, fallback=spun((x, top + radius * 1.75))
+            )
         else:
             rad = style.bidirected_bend / 100.0
             start = boundary_point(

@@ -393,6 +393,40 @@ cannot typeset**: a document macro is defined in the document, and matplotlib's 
 seen it, so `to_image` falls back to the plain expression rather than raising mid-`savefig`. TikZ
 output, which goes to real LaTeX, keeps them.
 
+**Label placement is measured, not eyeballed.** `render/diagnostics.py::collision_report` counts
+and totals label-label, label-**foreign**-edge and label-node overlaps plus ambiguous labels, and a
+placement change is judged by that number across the writeup figures and the battery — you cannot
+see whether a change helped, because the eye goes to the worst label and ignores four new small
+ones. Rect overlaps are reported as area; a label over a line as the **length of line covered**,
+since the area of intersection with a zero-width path is zero and the covered length is exactly how
+much of the line the label's white fill erases.
+
+Four things the pass does that are easy to get wrong:
+
+- **A label may sit on its OWN edge** — that is what `fill=white` is for — but not on anybody
+  else's. Without that distinction every label flees the edge it annotates.
+- **The one exception is a self-loop's own arc**, which IS an obstacle for its own label: a `1/4`
+  bisected by the loop it annotates is the most visible defect a crowded figure has.
+- **Zero overlap is not enough.** A label can sit in clear space and still belong to nobody, so
+  there is an ambiguity term: it must end up nearer its own edge than any foreign one.
+- **Rect overlaps are scored as a fraction of the label's own area**, not as raw cm². Raw areas are
+  small numbers next to a covered edge length, which made a label-on-a-node look cheaper than a
+  label-on-a-line — measured, label-node collisions went *up* while everything else improved.
+
+Self-loops participate in placement, choosing a direction and looseness. A loop appears in the
+placements dict **only if its default collided**; absent means "draw it as you always have", which
+is what keeps an uncrowded figure byte-identical. **Determinism is not negotiable** — same model in,
+same TikZ out, byte for byte, asserted by a test. A nondeterministic figure makes a writeup diff
+unreadable.
+
+**Label sizes are estimated, and the estimator knows two structural facts.** `style.text_width`
+models a math label per atom: a superscript and subscript on the same base **stack**, so they cost
+`max(sup, sub)` and not their sum, and a `\frac` is as wide as its wider part. Fitted against
+fifteen actually-compiled labels: a plain character count was **23.7% mean / 68.3% worst** error,
+this is **7.4% / 20.6%**. It matters because the old count made exactly this project's symbols
+(`z^{(m)}_{o1,1}`) come out 55–68% too *wide*, so labels fled space they could have used. A
+two-pass compile reading back real node dimensions is the proper fix and a much bigger job.
+
 **Nodes are sized by their contents** (`rectangle_inset` / `ellipse_inset`, with
 `node_min_*` only a floor for a one-character label) — a uniform `minimum width/height` is what
 makes a diagram crowded. Ellipses get a larger inset because an ellipse has proportionally less

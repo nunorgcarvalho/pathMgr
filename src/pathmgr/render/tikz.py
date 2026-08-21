@@ -38,7 +38,7 @@ from pathlib import Path
 
 from ..core.model import Model
 from .layout import Layout
-from .placement import labelled_edges, place_labels, route_edges
+from .placement import LOOP_HALF_ANGLE, labelled_edges, place_labels, route_edges
 from .style import DiagramStyle
 
 __all__ = [
@@ -122,7 +122,8 @@ def _preamble(style: DiagramStyle, colours: "_Colours") -> list[str]:
         f"{style.observed_shape}, inner sep={style.rectangle_inset}cm, "
         f"minimum width={style.node_min_width}cm, minimum height={style.node_min_height}cm}},",
         f"  pmLatent/.style={{draw={style.node_colour}, fill={style.node_fill}, "
-        f"{style.latent_shape}, inner sep={style.ellipse_inset}cm, "
+        f"{style.latent_shape}, inner xsep={style.ellipse_xsep}cm, "
+        f"inner ysep={style.ellipse_ysep}cm, "
         f"minimum width={style.node_min_width}cm, minimum height={style.node_min_height}cm}},",
         f"  pmDirected/.style={{{style.arrow_tip_directed}, "
         f"line width={style.directed_width}pt}},",
@@ -208,15 +209,16 @@ def to_tikz(
             "pmBidirected", style.bidirected_colour, style, hot, highlighting, colours
         )
         label = style.edge_label((edge.a, edge.b), edge.value)
+        loop = placements.get((edge.a, edge.a)) if edge.is_variance else None
         node = _label_node(
             label, style, hot, highlighting, colours,
-            None if edge.is_variance else placements.get((edge.a, edge.b)),
+            loop if edge.is_variance else placements.get((edge.a, edge.b)),
             None if edge.is_variance else _direction(layout, edge.a, edge.b),
         )
         if edge.is_variance:
             body.append(
-                f"  \\draw[{options}] ({_node_id(edge.a)}) to[loop above, looseness=6, "
-                f"in=120, out=60] {node}({_node_id(edge.a)});"
+                f"  \\draw[{options}] ({_node_id(edge.a)}) {_loop_connector(loop)} "
+                f"{node}({_node_id(edge.a)});"
             )
         else:
             body.append(
@@ -319,6 +321,25 @@ def _hot_width(base: str, style: DiagramStyle) -> float:
         "pmCopath": style.copath_width,
     }
     return widths[base] * style.highlight_scale
+
+
+def _loop_connector(placement) -> str:
+    """The ``to[...]`` for a variance self-loop.
+
+    With no placement the loop had no reason to move, and this emits the exact string the back end
+    has always emitted -- which is what keeps an uncrowded figure byte-identical. Only a loop that
+    actually collided gets the general form, whose ``out``/``in`` reproduce ``loop above`` when the
+    direction is 90 degrees.
+    """
+    if placement is None or placement.loop_direction is None:
+        return "to[loop above, looseness=6, in=120, out=60]"
+    direction = placement.loop_direction
+    looseness = placement.loop_looseness
+    out_angle = (direction - LOOP_HALF_ANGLE) % 360
+    in_angle = (direction + LOOP_HALF_ANGLE) % 360
+    return (
+        f"to[loop, looseness={looseness:g}, in={in_angle:.0f}, out={out_angle:.0f}]"
+    )
 
 
 def _label_node(

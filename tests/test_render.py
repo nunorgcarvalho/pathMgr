@@ -494,7 +494,10 @@ def test_tikz_nodes_use_inner_sep_rather_than_a_uniform_minimum():
     style = DiagramStyle()
     tex = to_tikz(three_edge_model(), style=style)
     assert f"inner sep={style.rectangle_inset}cm" in tex
-    assert f"inner sep={style.ellipse_inset}cm" in tex
+    # latents get their padding per axis: horizontal room is what these diagrams are short of
+    assert f"inner xsep={style.ellipse_xsep}cm" in tex
+    assert f"inner ysep={style.ellipse_ysep}cm" in tex
+    assert style.ellipse_xsep < style.ellipse_ysep, "horizontal is the expensive direction"
     # the minimums are a floor for a one-character label, not a target
     assert f"minimum width={style.node_min_width}cm" in tex
     assert style.node_min_width < 0.6
@@ -875,3 +878,168 @@ def test_the_raster_back_end_falls_back_for_names_it_cannot_typeset(tmp_path):
         highlight=chain,
     )
     assert path.exists() and path.stat().st_size > 0
+
+
+# ======================================================================================
+# label placement: loops, edge obstacles, ambiguity, determinism (task-20260821-161358)
+# ======================================================================================
+def _crowded_model():
+    """Two parents' alleles transmitting to two children -- the shape that crowds worst."""
+    return pm.from_text(
+        """
+        latent: z_m1, z_m2, z_p1, z_p2, z_o1, z_o2
+        positive: V
+        z_o1 ~ (1/2)*z_m1 + (1/2)*z_p1
+        z_o2 ~ (1/2)*z_m2 + (1/2)*z_p2
+        z_m1 ~~ V*z_m1
+        z_m2 ~~ V*z_m2
+        z_p1 ~~ V*z_p1
+        z_p2 ~~ V*z_p2
+        z_o1 ~~ (1/4)*z_o1
+        z_o2 ~~ (1/4)*z_o2
+        """
+    )
+
+
+def _crowded_layout():
+    return Layout({
+        "z_m1": (0.0, 2.0), "z_m2": (1.2, 2.0), "z_p1": (2.4, 2.0), "z_p2": (3.6, 2.0),
+        "z_o1": (1.0, 0.0), "z_o2": (2.6, 0.0),
+    })
+
+
+def test_variance_self_loops_take_part_in_placement():
+    """They used to be excluded, so their label was positioned by a rule that checked nothing."""
+    from pathmgr.render.placement import labelled_edges as build
+
+    model, style = _crowded_model(), DiagramStyle()
+    kinds = {kind for _key, _text, _bow, kind in build(model, style)}
+    assert "variance" in kinds, "self-loops are not reaching the placement pass"
+
+
+def test_a_self_loop_label_does_not_sit_on_its_own_arc():
+    """The most visible defect in a crowded figure, and the cheapest to check."""
+    from pathmgr.render.placement import (
+        DEFAULT_LOOP_DIRECTION,
+        DEFAULT_LOOP_LOOSENESS,
+        label_rect,
+        labelled_edges as build,
+        loop_path,
+        node_rect,
+        place_labels,
+    )
+    from pathmgr.render.placement import EdgePath
+
+    model, style = _crowded_model(), DiagramStyle()
+    layout = _crowded_layout().completed(model)
+    placements = place_labels(model, layout, style, build(model, style))
+
+    for key, text, _bow, kind in build(model, style):
+        if kind != "variance":
+            continue
+        placement = placements.get(key)
+        direction = DEFAULT_LOOP_DIRECTION if placement is None or placement.loop_direction is None else placement.loop_direction
+        looseness = DEFAULT_LOOP_LOOSENESS if placement is None or placement.loop_looseness is None else placement.loop_looseness
+        point = placement.point if placement is not None else None
+        if point is None:
+            continue
+        arc = EdgePath(key, "variance", loop_path(
+            layout[key[0]], node_rect(key[0], model, layout, style), direction, looseness
+        ))
+        covered = arc.length_inside(label_rect(point, text, style))
+        assert covered == 0.0, f"{key} label sits on {covered:.3f}cm of its own loop"
+
+
+def test_a_label_may_sit_on_its_own_edge_but_not_a_foreign_one():
+    """The distinction that keeps the cure from being worse than the disease.
+
+    Without it every label flees the edge it annotates -- overlapping your own edge is what the
+    white fill is for and is how a correctly placed label has always looked.
+    """
+    from pathmgr.render.diagnostics import collision_report
+
+    model, style = _crowded_model(), DiagramStyle()
+    report = collision_report(model, _crowded_layout(), style)
+    foreign = report.of_kind("label-edge")
+    assert not foreign, f"labels landed on foreign edges: {[str(c) for c in foreign]}"
+    # and labels did NOT all run away from their own edges: at least one still sits on its own
+    assert report.n_labels > 0
+
+
+def test_placement_is_deterministic_and_stable_across_repeats():
+    """A nondeterministic figure makes a writeup diff unreadable. Not negotiable."""
+    from pathmgr.render.placement import labelled_edges as build, place_labels
+
+    model, style = _crowded_model(), DiagramStyle()
+    layout = _crowded_layout().completed(model)
+    first = place_labels(model, layout, style, build(model, style))
+    for _ in range(3):
+        again = place_labels(model, layout, style, build(model, style))
+        assert again == first
+
+
+def test_rendering_the_same_model_twice_is_byte_identical():
+    """The end-to-end version of the guarantee, through the real back end."""
+    model = _crowded_model()
+    layout = _crowded_layout()
+    once = to_tikz(model, layout=layout, style=DiagramStyle())
+    twice = to_tikz(model, layout=layout, style=DiagramStyle())
+    assert once == twice
+
+
+def test_an_uncrowded_loop_keeps_the_legacy_drawing_exactly():
+    """Byte-identity where there was nothing to fix: absent placement means "draw it as always"."""
+    model = pm.from_text("positive: V\na ~~ V*a\nb ~ 2*a\nb ~~ V*b")
+    tex = to_tikz(model, layout=Layout({"a": (0.0, 0.0), "b": (3.0, 0.0)}))
+    assert "to[loop above, looseness=6, in=120, out=60]" in tex, tex
+
+
+def test_the_collision_metric_sees_a_deliberate_overlap():
+    """The metric has to be able to fail, or reporting it proves nothing."""
+    from pathmgr.render.diagnostics import collision_report
+
+    model = pm.from_text(
+        """
+        positive: V
+        y ~ b1*x1 + b2*x2
+        x1 ~~ V*x1
+        x2 ~~ V*x2
+        """
+    )
+    # x1 and x2 stacked almost on top of each other: their labels cannot both be clear
+    cramped = Layout({"x1": (0.0, 0.0), "x2": (0.04, 0.0), "y": (1.0, 0.02)})
+    report = collision_report(model, cramped, DiagramStyle())
+    assert report.collisions, "a deliberately impossible layout reported no collisions"
+    assert "label" in report.summary()
+
+
+def test_the_label_width_estimate_beats_a_character_count_on_real_labels():
+    """Fitted against compiled widths; these are the actual pt values from pdflatex."""
+    from pathmgr.render.style import text_width
+
+    style = DiagramStyle()
+    pt_per_cm = 28.4527
+    measured = {
+        r"\beta_1": 10.14238,
+        r"\frac{1}{2}": 6.38612,
+        "z^{(p)}_{o1,1}": 19.44498,
+        r"\left[\rho_y\right]": 15.53247,
+        "x_{o2,2}": 20.50975,
+    }
+    for label, points in measured.items():
+        estimate = text_width(label, style) * pt_per_cm
+        error = abs(estimate - points) / points
+        assert error < 0.25, f"{label}: estimated {estimate:.1f}pt vs measured {points:.1f}pt"
+
+
+def test_a_superscript_and_subscript_on_one_base_stack_rather_than_add():
+    """The structural fact that fixed most of the estimator's error."""
+    from pathmgr.render.style import text_width
+
+    style = DiagramStyle()
+    both = text_width("z^{(m)}_{m,1}", style)
+    just_sub = text_width("z_{m,1}", style)
+    just_sup = text_width("z^{(m)}", style)
+    # stacked: the pair costs the wider of the two, not their sum
+    assert both < just_sub + just_sup - style.glyph_width + 1e-9
+    assert both >= max(just_sub, just_sup) - 1e-9

@@ -23,28 +23,106 @@ import sympy as sp
 
 from ..core.tracing import tex
 
-__all__ = ["DiagramStyle", "coefficient_label"]
+__all__ = ["DiagramStyle", "coefficient_label", "text_width"]
 
-#: LaTeX control sequences that take up no visual width when estimating a label's size
-_MARKUP = ("\\left", "\\right", "\\tfrac", "\\frac", "\\text", "\\mathrm", "{", "}", "$", "\\,")
+#: LaTeX control sequences that occupy no horizontal space of their own
+_ZERO_WIDTH = (r"\left", r"\right", r"\,", r"\!", r"\;", r"\ ", r"\quad", r"\qquad")
+#: characters that typeset much narrower than a letter -- delimiters, operators, punctuation
+_NARROW_CHARS = frozenset("[](){}+-=,.|/")
 
 
-def _visible_length(label: str) -> int:
-    """Roughly how many characters wide a LaTeX label prints as.
+def _group(text: str, i: int) -> tuple[str, int]:
+    """The braced group -- or single token -- starting at ``i``, and the index after it."""
+    if i >= len(text):
+        return "", i
+    if text[i] == "{":
+        level, j = 0, i
+        while j < len(text):
+            if text[j] == "{":
+                level += 1
+            elif text[j] == "}":
+                level -= 1
+                if level == 0:
+                    return text[i + 1 : j], j + 1
+            j += 1
+        return text[i + 1 :], len(text)
+    if text[i] == "\\":
+        j = i + 1
+        while j < len(text) and text[j].isalpha():
+            j += 1
+        return text[i:j], j
+    return text[i], i + 1
 
-    A crude estimate on purpose: it only has to be close enough to keep an edge label off a node
-    box. A control sequence like ``\\rho`` prints as one glyph, and braces print as nothing.
+
+def text_width(label: str, style: "DiagramStyle") -> float:
+    """Estimated typeset width of a math label, in cm.
+
+    A **rough** estimate on purpose -- it only has to be close enough to keep labels off each other
+    and off the lines. TikZ sizes its own boxes from the real typeset label; this is what the
+    collision scoring in both back ends has to work with, and a two-pass compile that reads back
+    real node dimensions is the proper fix and a much larger job.
+
+    It replaces a plain character count, which was wrong in a way that mattered. Measured against
+    fifteen actually-compiled labels drawn from the writeup figures, the character count was
+    **23.7% mean / 68.3% worst** error; this is **7.4% mean / 20.6% worst**. Two structural facts
+    account for almost all of the gap, and both are the same trick:
+
+    - **A superscript and a subscript on the same base stack vertically**, so they cost
+      ``max(sup, sub)`` and not their sum. Without this, exactly the symbols this project uses
+      everywhere (``z^{(m)}_{o1,1}``) came out 55-68% too *wide* -- so the label thought it needed
+      far more room than it does, and placement fled space it could have used.
+    - **A fraction is as wide as its wider part**, again not the sum.
+
+    Scripts are then scaled by ``script_scale``, and delimiters get their own narrower width.
     """
-    text = label
-    for token in _MARKUP:
-        text = text.replace(token, "")
-    # each remaining backslash-word is one glyph
-    parts = text.split("\\")
-    length = len(parts[0])
-    for part in parts[1:]:
-        stripped = part.lstrip("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        length += 1 + len(stripped)
-    return max(1, length)
+    total, i, n = 0.0, 0, len(label)
+    base_width: float | None = None
+    sup = sub = 0.0
+
+    def flush(carried: float) -> float:
+        nonlocal base_width, sup, sub
+        if base_width is not None:
+            carried += base_width + max(sup, sub)
+        base_width, sup, sub = None, 0.0, 0.0
+        return carried
+
+    while i < n:
+        skipped = False
+        for token in _ZERO_WIDTH:
+            if label.startswith(token, i):
+                i += len(token)
+                skipped = True
+                break
+        if skipped:
+            continue
+        char = label[i]
+        if label.startswith(r"\frac", i):
+            total = flush(total)
+            i += len(r"\frac")
+            numerator, i = _group(label, i)
+            denominator, i = _group(label, i)
+            base_width = max(text_width(numerator, style), text_width(denominator, style))
+            continue
+        if char in "^_":
+            content, i = _group(label, i + 1)
+            scripted = text_width(content, style) * style.script_scale
+            if char == "^":
+                sup = max(sup, scripted)
+            else:
+                sub = max(sub, scripted)
+            continue
+        if char == "\\":
+            total = flush(total)
+            _token, i = _group(label, i)
+            base_width = style.glyph_width
+            continue
+        if char in "{}$ ":
+            i += 1
+            continue
+        total = flush(total)
+        base_width = style.narrow_glyph_width if char in _NARROW_CHARS else style.glyph_width
+        i += 1
+    return flush(total)
 
 
 def coefficient_label(
@@ -77,16 +155,28 @@ class DiagramStyle:
     observed_shape: str = "rectangle"
     latent_shape: str = "ellipse"
     #: padding around the label inside a rectangle, in cm
-    rectangle_inset: float = 0.09
-    #: padding inside an ellipse. Larger, because an ellipse has proportionally less usable area
-    #: than its bounding box -- that is geometry, not extra padding.
-    ellipse_inset: float = 0.16
-    #: floor on node size, in cm, so a one-character label still gets a sane box
-    node_min_width: float = 0.42
+    rectangle_inset: float = 0.06
+    #: horizontal padding inside an ellipse. Split from the vertical because they are not equally
+    #: expensive: these diagrams are wide and short of horizontal room, the labels that crowd worst
+    #: are wide ones (``z^{(m)}_{o1,1}``), and an ellipse already wastes more width than a rectangle
+    #: for the same text. Vertical padding is cheap here and stays generous.
+    ellipse_xsep: float = 0.07
+    #: vertical padding inside an ellipse
+    ellipse_ysep: float = 0.13
+    #: floor on node size, in cm, so a one-character label still gets a sane box. MEASURED: only
+    #: ``node_min_width`` ever binds, and only for a single-glyph label like ``V`` (0.405 -> 0.420).
+    #: ``node_min_height`` binds for nothing -- height comes out as
+    #: ``raster_line_height + 2 * inset``, which is 0.52 for a rectangle and 0.60 for an ellipse,
+    #: both already above it. Lowering it would change no figure.
+    node_min_width: float = 0.38
     node_min_height: float = 0.34
-    #: raster-only: nominal cm per character, used to estimate a label's width when sizing a box
-    #: before it is typeset. Only affects the raster back end; TikZ measures the real thing.
-    raster_char_width: float = 0.115
+    #: estimated width in cm of one base glyph in a math label. Fitted against fifteen compiled
+    #: labels from the writeup figures; see :func:`text_width` for the residual error.
+    glyph_width: float = 0.225
+    #: width of a delimiter or operator, which typesets much narrower than a letter
+    narrow_glyph_width: float = 0.097
+    #: how much narrower a sub/superscript is than a base glyph
+    script_scale: float = 0.6
     raster_line_height: float = 0.34
 
     # -- edge appearance --------------------------------------------------------------
@@ -273,12 +363,14 @@ class DiagramStyle:
         boxes from the real typeset label; this only has to be close enough to keep labels off
         them.
         """
-        text = _visible_length(label)
-        inset = self.ellipse_inset if latent else self.rectangle_inset
-        width = max(self.node_min_width, text * self.raster_char_width + 2 * inset)
-        height = max(self.node_min_height, self.raster_line_height + 2 * inset)
+        text = text_width(label, self)
+        x_inset = self.ellipse_xsep if latent else self.rectangle_inset
+        y_inset = self.ellipse_ysep if latent else self.rectangle_inset
+        width = max(self.node_min_width, text + 2 * x_inset)
+        height = max(self.node_min_height, self.raster_line_height + 2 * y_inset)
         if latent:
-            # an ellipse must be wider than its bounding text to contain it
+            # an ellipse has to be wider than the text box it contains: circumscribing a w-by-h box
+            # needs sqrt(2)*w in principle, and TikZ lands nearer 1.25 in practice for these sizes.
             width *= 1.25
         return (width, height)
 

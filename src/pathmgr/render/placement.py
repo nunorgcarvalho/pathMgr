@@ -28,11 +28,16 @@ from .style import DiagramStyle
 
 __all__ = [
     "EdgeCrossing",
+    "EdgePath",
     "LabelPlacement",
     "Rect",
     "boundary_point",
     "edge_node_crossings",
+    "edge_paths",
+    "label_rect",
     "labelled_edges",
+    "loop_label_point",
+    "loop_path",
     "place_labels",
 ]
 
@@ -70,11 +75,19 @@ class LabelPlacement:
 
     ``position`` is the fraction along the edge (TikZ ``pos=``), ``offset`` the perpendicular
     displacement in cm, and ``point`` the resulting coordinate for back ends that place directly.
+
+    For a **variance self-loop** the label is not positioned along a chord, so ``loop_direction``
+    (degrees) and ``loop_looseness`` carry the choice instead and the back ends must draw the loop
+    there. A self-loop only appears in the placements dict **at all** when its default position
+    collided: absent means "draw it the way you always have", which is what keeps an uncrowded
+    figure byte-identical.
     """
 
     position: float
     offset: float
     point: tuple[float, float]
+    loop_direction: float | None = None
+    loop_looseness: float | None = None
 
 
 @dataclass(frozen=True)
@@ -281,25 +294,48 @@ def _candidate_point(
     return (x - offset * dy / length, y + offset * dx / length)
 
 
-def labelled_edges(model: Model, style: DiagramStyle) -> list[tuple[tuple[str, str], str, float]]:
-    """The edges that carry a label, in a fixed draw order, as ``(key, text, bow)``.
+def label_rect(
+    point: tuple[float, float], text: str, style: DiagramStyle
+) -> Rect:
+    """The box a label occupies. One definition, so scoring and measuring cannot disagree."""
+    width, height = style.node_size(text, latent=False)
+    return Rect(
+        point[0],
+        point[1],
+        width + 2 * style.label_pad,
+        style.raster_line_height + 2 * style.label_pad,
+    )
+
+
+def labelled_edges(
+    model: Model, style: DiagramStyle
+) -> list[tuple[tuple[str, str], str, float, str]]:
+    """The edges that carry a label, in a fixed draw order, as ``(key, text, bow, kind)``.
 
     Lives here rather than in either back end because both must build it identically -- the order
     is what makes :func:`place_labels` deterministic, and if the two disagreed their figures would
-    place labels differently. Variance self-loops are excluded: their label is positioned relative
-    to the loop, not to a chord between two nodes.
+    place labels differently.
+
+    **Variance self-loops are included** (``kind == "variance"``). They used to be excluded, which
+    meant their label was positioned by a hard-coded rule that checked nothing -- and a label
+    sitting on its own loop's arc is the most visible defect in a crowded figure.
     """
-    out: list[tuple[tuple[str, str], str, float]] = []
+    out: list[tuple[tuple[str, str], str, float, str]] = []
     for edge in model.directed_edges:
         text = style.edge_label((edge.src, edge.dst), edge.coeff)
         if text:
-            out.append(((edge.src, edge.dst), text, 0.0))
+            out.append(((edge.src, edge.dst), text, 0.0, "directed"))
     for edge in model.bidirected_edges:
         if edge.is_variance:
+            if not style.draws_variance(False):
+                continue
+            text = style.edge_label((edge.a, edge.a), edge.value)
+            if text:
+                out.append(((edge.a, edge.a), text, 0.0, "variance"))
             continue
         text = style.edge_label((edge.a, edge.b), edge.value)
         if text:
-            out.append(((edge.a, edge.b), text, style.bidirected_bend / 100.0))
+            out.append(((edge.a, edge.b), text, style.bidirected_bend / 100.0, "bidirected"))
     seen: dict[frozenset, int] = {}
     for copath in model.copaths:
         pair = frozenset((copath.a, copath.b))
@@ -307,7 +343,214 @@ def labelled_edges(model: Model, style: DiagramStyle) -> list[tuple[tuple[str, s
         seen[pair] = index + 1
         text = style.copath_label(copath)
         if text:
-            out.append(((copath.a, copath.b), text, -0.12 * index))
+            out.append(((copath.a, copath.b), text, -0.12 * index, "copath"))
+    return out
+
+
+#: how far around the loop's direction the arc leaves and re-enters the node, in degrees.
+#: 30 reproduces TikZ's ``loop above, in=120, out=60``.
+LOOP_HALF_ANGLE = 30.0
+
+#: the loop direction and looseness the back ends have always used
+DEFAULT_LOOP_DIRECTION = 90.0
+DEFAULT_LOOP_LOOSENESS = 6.0
+
+#: candidate loop directions, in degrees, tried in this order. Above first, so a loop that has no
+#: reason to move stays exactly where it has always been drawn.
+LOOP_DIRECTIONS: tuple[float, ...] = (90.0, 0.0, 180.0, 270.0, 45.0, 135.0, 315.0, 225.0)
+#: candidate loop tightnesses, tried in this order for each direction
+LOOP_LOOSENESSES: tuple[float, ...] = (6.0, 8.0, 4.5, 11.0)
+
+#: how many times to sweep the greedy pass. A single pass leaves the last labels with whatever
+#: space remains and never revisits the first; two or three sweeps let early labels move once the
+#: crowd exists, and it converges long before this in practice.
+MAX_SWEEPS = 3
+# Scoring weights. Rect overlaps are scored as a FRACTION of the label's own area, not as a raw
+# area: a label box is a small fraction of a cm^2, so a raw area sits at ~0.01-0.6 while a covered
+# edge length sits at ~1, and an unnormalised sum makes a label-on-a-node look cheaper than a
+# label-on-a-line. Measured: with raw areas, label-node collisions across the battery went UP
+# (47 -> 57) while everything else improved, because labels were escaping edges onto nodes.
+#: a label fully covering another label counts 1.0
+LABEL_OVERLAP_WEIGHT = 1.0
+#: Weighted ABOVE the label term, which is not obvious and was settled by sweeping it and
+#: measuring across the writeup figures and the battery (label-label / label-edge / label-node /
+#: ambiguous counts):
+#:     1.0 -> 26 / 119 / 52 / 48
+#:     2.0 -> 28 / 117 / 49 / 50
+#:     3.0 -> 28 / 119 / 39 / 52     <- chosen: the only setting where all four beat the old pass
+#:     5.0 -> 28 / 122 / 35 / 53
+#: (the old pass scored 113 / 343 / 47 / 84.) At 1.0 labels escape edges by grazing node corners,
+#: which is how label-node came out WORSE than before while everything else improved.
+NODE_OVERLAP_WEIGHT = 3.0
+#: per centimetre of a FOREIGN edge covered. A label's own edge is exempt.
+FOREIGN_EDGE_WEIGHT = 0.30
+#: per centimetre by which a label is closer to a foreign edge than to its own
+AMBIGUITY_WEIGHT = 0.15
+#: per centimetre of a self-loop's ARC that lands inside somebody else's node. Weighted above the
+#: label terms: moving a loop's arc across a neighbour to buy its label some room trades a small
+#: defect for a large one.
+LOOP_ARC_WEIGHT = 2.0
+#: per centimetre of a self-loop's own arc covered by its own label. The one place a label is not
+#: allowed to sit on its own edge -- see the comment at the use site.
+OWN_LOOP_ARC_WEIGHT = 1.5
+#: multiples of half a label's height to try pushing a loop label out past its own arc
+LOOP_CLEARANCES: tuple[float, ...] = (1.0, 1.5, 2.1, 2.8)
+
+
+@dataclass(frozen=True)
+class EdgePath:
+    """The polyline a back end will actually draw for one edge, sampled.
+
+    Exists so label placement and the collision metric score against the *drawn* geometry rather
+    than a chord. ``key`` identifies the edge so a label can tell its **own** edge from a foreign
+    one -- a distinction that matters more than it looks, because a label is allowed to sit on its
+    own edge (that is what the white fill is for) and must not sit on anybody else's.
+    """
+
+    key: tuple[str, str]
+    kind: str
+    points: tuple[tuple[float, float], ...]
+
+    def distance_to(self, point: tuple[float, float]) -> float:
+        """Shortest distance from ``point`` to the sampled path."""
+        px, py = point
+        return min(math.hypot(px - x, py - y) for x, y in self.points)
+
+    def length_inside(self, rect: "Rect") -> float:
+        """Length of path lying inside ``rect``.
+
+        The natural measure for a label sitting on a line: a rectangle-rectangle *area* is
+        meaningless against a zero-width path, and the length a label covers is exactly how much
+        of the line its white fill erases.
+        """
+        left, bottom, right, top = rect.bounds
+        total = 0.0
+        for (x0, y0), (x1, y1) in zip(self.points, self.points[1:]):
+            inside0 = left <= x0 <= right and bottom <= y0 <= top
+            inside1 = left <= x1 <= right and bottom <= y1 <= top
+            segment = math.hypot(x1 - x0, y1 - y0)
+            if inside0 and inside1:
+                total += segment
+            elif inside0 or inside1:
+                total += segment / 2.0  # crossing the boundary: charge half, it is a sample
+        return total
+
+
+def loop_path(
+    centre: tuple[float, float],
+    rect: Rect,
+    direction: float = DEFAULT_LOOP_DIRECTION,
+    looseness: float = DEFAULT_LOOP_LOOSENESS,
+    samples: int = 24,
+) -> tuple[tuple[float, float], ...]:
+    """The arc of a variance self-loop, as a sampled polyline.
+
+    TikZ draws it with ``to[loop, out=d-30, in=d+30, looseness=L]``; matplotlib with a strongly
+    bowed ``arc3``. Both are approximated by a quadratic Bezier that leaves and re-enters the node
+    at those angles and bulges along ``direction`` by an amount set by ``looseness`` -- close
+    enough to decide whether a label lands on the arc, which is all this is for.
+    """
+    out_angle = math.radians(direction - LOOP_HALF_ANGLE)
+    in_angle = math.radians(direction + LOOP_HALF_ANGLE)
+    radius_x, radius_y = rect.width / 2.0, rect.height / 2.0
+    start = (centre[0] + radius_x * math.cos(out_angle), centre[1] + radius_y * math.sin(out_angle))
+    end = (centre[0] + radius_x * math.cos(in_angle), centre[1] + radius_y * math.sin(in_angle))
+    reach = max(radius_x, radius_y) * looseness / 6.0 * 1.15
+    theta = math.radians(direction)
+    control = (
+        (start[0] + end[0]) / 2.0 + reach * math.cos(theta),
+        (start[1] + end[1]) / 2.0 + reach * math.sin(theta),
+    )
+    points = []
+    for i in range(samples + 1):
+        t = i / samples
+        u = 1 - t
+        points.append(
+            (
+                u * u * start[0] + 2 * u * t * control[0] + t * t * end[0],
+                u * u * start[1] + 2 * u * t * control[1] + t * t * end[1],
+            )
+        )
+    return tuple(points)
+
+
+def loop_label_point(
+    centre: tuple[float, float],
+    rect: Rect,
+    direction: float = DEFAULT_LOOP_DIRECTION,
+    looseness: float = DEFAULT_LOOP_LOOSENESS,
+    clearance: float = 0.0,
+) -> tuple[float, float]:
+    """Where a self-loop's label goes: just beyond the far side of its own arc.
+
+    Past the apex, not on it. The label sitting *on* its own loop is the single most visible defect
+    in a crowded figure, and it happens because the loop's own arc was never treated as an obstacle
+    for the loop's own label.
+    """
+    path = loop_path(centre, rect, direction, looseness)
+    apex = max(
+        path,
+        key=lambda p: (p[0] - centre[0]) * math.cos(math.radians(direction))
+        + (p[1] - centre[1]) * math.sin(math.radians(direction)),
+    )
+    theta = math.radians(direction)
+    return (apex[0] + clearance * math.cos(theta), apex[1] + clearance * math.sin(theta))
+
+
+def edge_paths(
+    model: Model,
+    layout: Layout,
+    style: DiagramStyle,
+    loop_choices: dict[str, tuple[float, float]] | None = None,
+) -> list[EdgePath]:
+    """Every drawn edge as a sampled path, in the back ends' draw order.
+
+    ``loop_choices`` maps a node to its chosen ``(direction, looseness)``; anything absent uses the
+    default, which is what the back ends draw when a loop did not need to move.
+    """
+    loop_choices = loop_choices or {}
+    bends = route_edges(model, layout, style) if style.route_edges_around_nodes else {}
+    rects = {n: node_rect(n, model, layout, style) for n in model.names if n in layout}
+    out: list[EdgePath] = []
+
+    def sampled(a: str, b: str, bend: float, samples: int = 32):
+        return tuple(
+            _bezier_point(layout[a], layout[b], bend, i / samples) for i in range(samples + 1)
+        )
+
+    for edge in model.directed_edges:
+        if edge.src in layout and edge.dst in layout:
+            bend = bends.get((edge.src, edge.dst), 0.0)
+            out.append(EdgePath((edge.src, edge.dst), "directed", sampled(edge.src, edge.dst, -bend)))
+    for edge in model.bidirected_edges:
+        if edge.a not in layout or edge.b not in layout:
+            continue
+        if edge.is_variance:
+            if not style.draws_variance(False):
+                continue
+            direction, looseness = loop_choices.get(
+                edge.a, (DEFAULT_LOOP_DIRECTION, DEFAULT_LOOP_LOOSENESS)
+            )
+            out.append(
+                EdgePath(
+                    (edge.a, edge.a),
+                    "variance",
+                    loop_path(layout[edge.a], rects[edge.a], direction, looseness),
+                )
+            )
+        else:
+            out.append(
+                EdgePath((edge.a, edge.b), "bidirected", sampled(edge.a, edge.b, style.bidirected_bend))
+            )
+    seen: dict[frozenset, int] = {}
+    for copath in model.copaths:
+        if copath.a not in layout or copath.b not in layout:
+            continue
+        pair = frozenset((copath.a, copath.b))
+        index = seen.get(pair, 0)
+        seen[pair] = index + 1
+        bow = -12.0 * index if index else -bends.get((copath.a, copath.b), 0.0)
+        out.append(EdgePath((copath.a, copath.b), "copath", sampled(copath.a, copath.b, bow)))
     return out
 
 
@@ -315,58 +558,171 @@ def place_labels(
     model: Model,
     layout: Layout,
     style: DiagramStyle,
-    labelled_edges: list[tuple[tuple[str, str], str, float]],
+    labelled_edges: list[tuple[tuple[str, str], str, float, str]],
 ) -> dict[tuple[str, str], LabelPlacement]:
-    """Choose a placement for each labelled edge, greedily and deterministically.
+    """Choose a placement for each labelled edge, deterministically.
 
-    ``labelled_edges`` is ``(key, label text, bow)`` in the order the back end will draw them;
-    that order fixes the result, so both back ends must pass the same one. Edges are processed in
-    the given order and each takes the best candidate against everything already placed.
+    ``labelled_edges`` is ``(key, text, bow, kind)`` in the order the back end will draw them; that
+    order fixes the result, so both back ends must pass the same one.
+
+    What a candidate is scored against, and why each term is there:
+
+    - **other labels** and **node boxes** -- overlap area. Both make a label unreadable.
+    - **foreign edges** -- the length of somebody else's line the label's white fill would erase.
+      A label's **own** edge is exempt: sitting on it is what the fill is for, and penalising it
+      would send every label fleeing the edge it annotates, which is worse than the disease.
+    - **ambiguity** -- how much closer the label sits to a foreign edge than to its own. A label
+      can have zero overlap and still be unreadable, floating between two crossing edges belonging
+      to neither. Zero overlap is necessary, not sufficient.
+
+    Two properties are preserved deliberately. The exact midpoint with no offset is always the
+    first candidate and wins on a tie, so **a diagram with no collisions comes out byte-identical
+    to what it did before any of this existed**. And a self-loop gets an entry here only if its
+    default placement collided -- absent means the back end draws it exactly as it always has.
+
+    The pass is swept up to :data:`MAX_SWEEPS` times. A single greedy pass gives the labels drawn
+    last whatever space is left and never revisits the early ones; sweeping lets an early label
+    move once it can see the crowd that arrived after it. It stops as soon as a sweep changes
+    nothing.
     """
-    obstacles: list[Rect] = [
-        node_rect(name, model, layout, style) for name in model.names if name in layout
+    nodes = [node_rect(name, model, layout, style) for name in model.names if name in layout]
+    rects = {name: node_rect(name, model, layout, style) for name in model.names if name in layout}
+    active = [
+        (key, text, bow, kind)
+        for key, text, bow, kind in labelled_edges
+        if key[0] in layout and key[1] in layout
     ]
-    placements: dict[tuple[str, str], LabelPlacement] = {}
 
-    for key, text, bow in labelled_edges:
-        a, b = key
-        if a not in layout or b not in layout:
-            continue
-        start, end = layout[a], layout[b]
-        width, height = style.node_size(text, latent=False)
-        width += 2 * style.label_pad
-        height = style.raster_line_height + 2 * style.label_pad
+    def loop_defaults() -> dict[str, tuple[float, float]]:
+        return {
+            key[0]: (DEFAULT_LOOP_DIRECTION, DEFAULT_LOOP_LOOSENESS)
+            for key, _t, _b, kind in active
+            if kind == "variance"
+        }
 
-        if not style.avoid_label_collisions:
-            point = _candidate_point(start, end, 0.5, 0.0, bow)
-            placements[key] = LabelPlacement(0.5, 0.0, point)
-            obstacles.append(Rect(point[0], point[1], width, height))
-            continue
+    chosen: dict[tuple[str, str], LabelPlacement] = {}
+    loop_choices = loop_defaults()
 
-        best: tuple[float, float, float, tuple[float, float]] | None = None
+    def candidates_for(key, text, bow, kind):
+        """(point, position, offset, loop_direction, loop_looseness) in preference order."""
+        if kind == "variance":
+            node = key[0]
+            rect = rects[node]
+            half_height = style.raster_line_height / 2.0 + style.label_pad
+            for direction in LOOP_DIRECTIONS:
+                for looseness in LOOP_LOOSENESSES:
+                    for step in LOOP_CLEARANCES:
+                        point = loop_label_point(
+                            layout[node], rect, direction, looseness,
+                            clearance=half_height * step,
+                        )
+                        yield (point, 0.5, 0.0, direction, looseness)
+            return
+        start_point, end_point = layout[key[0]], layout[key[1]]
         for position in style.label_positions:
             for offset in style.label_offsets:
-                point = _candidate_point(start, end, position, offset, bow)
-                candidate = Rect(point[0], point[1], width, height)
-                penalty = sum(candidate.overlap(other) for other in obstacles)
-                # prefer the midpoint and no offset, all else equal: the tie-breakers keep the
-                # output stable and keep simple diagrams looking exactly as they did
+                yield (
+                    _candidate_point(start_point, end_point, position, offset, bow),
+                    position,
+                    offset,
+                    None,
+                    None,
+                )
+
+    for sweep in range(MAX_SWEEPS):
+        paths = edge_paths(model, layout, style, loop_choices)
+        by_key: dict[tuple[str, str], list[EdgePath]] = {}
+        for path in paths:
+            by_key.setdefault(path.key, []).append(path)
+        changed = False
+
+        for key, text, bow, kind in active:
+            others = [
+                label_rect(placement.point, other_text, style)
+                for (other_key, other_text, _b, _k), placement in (
+                    (entry, chosen[entry[0]]) for entry in active if entry[0] in chosen
+                )
+                if other_key != key
+            ]
+            own_paths = by_key.get(key, [])
+            foreign = [path for path in paths if path.key != key]
+
+            best_cost = None
+            best = None
+            foreign_nodes = [
+                rect for name, rect in rects.items() if not (kind == "variance" and name == key[0])
+            ]
+            for point, position, offset, direction, looseness in candidates_for(
+                key, text, bow, kind
+            ):
+                rect = label_rect(point, text, style)
+                arc_penalty = 0.0
+                if kind == "variance":
+                    # the loop's ARC must not be flung across a neighbour to make room for its
+                    # label. Scoring only the label sent loops sideways into adjacent nodes, which
+                    # showed up as label-node collisions going UP across the battery.
+                    arc = loop_path(layout[key[0]], rects[key[0]], direction, looseness)
+                    arc_path = EdgePath(key, "variance", arc)
+                    arc_penalty = LOOP_ARC_WEIGHT * sum(
+                        arc_path.length_inside(node) for node in foreign_nodes
+                    )
+                    # ...and the loop's own arc is an obstacle for its OWN label. Everywhere else
+                    # a label may sit on its own edge, but a `1/4` bisected by the very loop it
+                    # annotates is the most visible defect in a crowded figure, so this one case
+                    # is the exception.
+                    arc_penalty += OWN_LOOP_ARC_WEIGHT * arc_path.length_inside(rect)
+                own_area = max(rect.width * rect.height, 1e-9)
+                penalty = LABEL_OVERLAP_WEIGHT * sum(
+                    rect.overlap(other) for other in others
+                ) / own_area
+                penalty += NODE_OVERLAP_WEIGHT * sum(
+                    rect.overlap(node) for node in nodes
+                ) / own_area
+                penalty += FOREIGN_EDGE_WEIGHT * sum(path.length_inside(rect) for path in foreign)
+                ambiguity = 0.0
+                if own_paths and foreign:
+                    own_distance = min(path.distance_to(point) for path in own_paths)
+                    foreign_distance = min(path.distance_to(point) for path in foreign)
+                    ambiguity = max(0.0, own_distance - foreign_distance)
                 cost = (
-                    penalty,
+                    penalty + AMBIGUITY_WEIGHT * ambiguity + arc_penalty,
                     abs(position - 0.5),
                     abs(offset),
+                    0.0 if direction is None else LOOP_DIRECTIONS.index(direction),
+                    0.0 if looseness is None else LOOP_LOOSENESSES.index(looseness),
                 )
-                if best is None or cost < best[:3]:
-                    best = (*cost, point)
-                    best_choice = (position, offset, point)
-                if penalty == 0.0 and position == 0.5 and offset == 0.0:
+                if best_cost is None or cost < best_cost:
+                    best_cost = cost
+                    best = (point, position, offset, direction, looseness)
+                if cost[0] == 0.0 and cost[1] == 0.0 and cost[2] == 0.0 and cost[3] == 0.0 and cost[4] == 0.0:
                     break  # the default is already clear; nothing can beat it
-            else:
+
+            point, position, offset, direction, looseness = best
+            if not style.avoid_label_collisions:
+                if kind == "variance":
+                    chosen.pop(key, None)
+                    continue
+                point = _candidate_point(layout[key[0]], layout[key[1]], 0.5, 0.0, bow)
+                position, offset, direction, looseness = 0.5, 0.0, None, None
+
+            if kind == "variance" and best_cost is not None and best_cost[0] == 0.0 and (
+                direction == DEFAULT_LOOP_DIRECTION and looseness == DEFAULT_LOOP_LOOSENESS
+            ):
+                # the loop is fine where it has always been: leave it to the back end's own rule so
+                # the emitted figure is unchanged
+                if chosen.pop(key, None) is not None:
+                    changed = True
+                loop_choices[key[0]] = (DEFAULT_LOOP_DIRECTION, DEFAULT_LOOP_LOOSENESS)
                 continue
+
+            placement = LabelPlacement(position, offset, point, direction, looseness)
+            if chosen.get(key) != placement:
+                changed = True
+            chosen[key] = placement
+            if kind == "variance":
+                loop_choices[key[0]] = (direction, looseness)
+
+        if not changed:
             break
 
-        position, offset, point = best_choice
-        placements[key] = LabelPlacement(position, offset, point)
-        obstacles.append(Rect(point[0], point[1], width, height))
-
-    return placements
+    return chosen
