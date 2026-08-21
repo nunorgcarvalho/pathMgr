@@ -258,9 +258,13 @@ class DiagramStyle:
     leader_lines: bool = True
     #: perpendicular offsets in cm reachable only with a leader
     leader_offsets: tuple[float, ...] = (0.75, 1.1, 1.5)
-    #: hairline width for a leader, in pt
-    leader_width: float = 0.3
-    leader_colour: str = "#777777"
+    #: hairline width for a leader, in pt. Deliberately more than a true hairline: at the size
+    #: these print, and inside a \footnotesize float, 0.3pt of light grey is close to invisible --
+    #: and a leader nobody can see is worse than none, because the label then reads as unattached.
+    leader_width: float = 0.45
+    #: grey rather than black so the leader reads as annotation and not as an edge, but dark enough
+    #: to survive printing
+    leader_colour: str = "#555555"
 
     # -- coefficient coding -------------------------------------------------------------
     #: lift a coefficient that appears on many edges off those edges and into the legend, coding it
