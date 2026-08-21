@@ -238,6 +238,16 @@ class DiagramStyle:
     label_pad: float = 0.1
     #: set False to go back to plain midpoint placement
     avoid_label_collisions: bool = True
+    #: allow a label that cannot be placed legibly near its edge to move far and be connected back
+    #: by a hairline. Standard cartographic practice: it turns an unresolvable collision into a
+    #: legible one. Only fires when moving far is worth ``LEADER_PENALTY``, so uncrowded diagrams
+    #: never grow one.
+    leader_lines: bool = True
+    #: perpendicular offsets in cm reachable only with a leader
+    leader_offsets: tuple[float, ...] = (0.75, 1.1, 1.5)
+    #: hairline width for a leader, in pt
+    leader_width: float = 0.3
+    leader_colour: str = "#777777"
 
     # -- edge routing ------------------------------------------------------------------
     #: bends (TikZ degrees) to try for an edge that would otherwise cross a third node.

@@ -88,6 +88,9 @@ class LabelPlacement:
     point: tuple[float, float]
     loop_direction: float | None = None
     loop_looseness: float | None = None
+    #: when the label had to move far to be legible, the point on its OWN edge to draw a hairline
+    #: back to. ``None`` for the overwhelming majority of labels, which sit on their edge already.
+    leader_to: tuple[float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -395,6 +398,13 @@ LOOP_ARC_WEIGHT = 2.0
 OWN_LOOP_ARC_WEIGHT = 1.5
 #: multiples of half a label's height to try pushing a loop label out past its own arc
 LOOP_CLEARANCES: tuple[float, ...] = (1.0, 1.5, 2.1, 2.8)
+#: a label is only a leader candidate once its best NEAR placement scores worse than this -- i.e.
+#: it is genuinely unresolvable, not merely imperfect. Small but not zero, so a label grazing a
+#: line by a hair does not earn a hairline of its own.
+LEADER_TRIGGER = 0.05
+#: what a leader line costs, in the same units as the overlap penalties. A leader is itself visual
+#: noise, so moving far has to be *meaningfully* cleaner than staying put to be worth it.
+LEADER_PENALTY = 0.10
 
 
 @dataclass(frozen=True)
@@ -603,8 +613,38 @@ def place_labels(
     chosen: dict[tuple[str, str], LabelPlacement] = {}
     loop_choices = loop_defaults()
 
-    def candidates_for(key, text, bow, kind):
-        """(point, position, offset, loop_direction, loop_looseness) in preference order."""
+    def candidates_for(key, text, bow, kind, far: bool = False):
+        """(point, position, offset, loop_direction, loop_looseness) in preference order.
+
+        ``far`` yields the distant placements that need a leader line back to the edge. They are a
+        SEPARATE pass, tried only when no near placement is legible, because a leader is worth
+        drawing exactly when the alternative is an unreadable label -- and never otherwise.
+        """
+        if far:
+            if kind == "variance":
+                node = key[0]
+                rect = rects[node]
+                half_height = style.raster_line_height / 2.0 + style.label_pad
+                for direction in LOOP_DIRECTIONS:
+                    for reach in style.leader_offsets:
+                        point = loop_label_point(
+                            layout[node], rect, direction, DEFAULT_LOOP_LOOSENESS,
+                            clearance=half_height + reach,
+                        )
+                        yield (point, 0.5, 0.0, direction, DEFAULT_LOOP_LOOSENESS)
+                return
+            start_point, end_point = layout[key[0]], layout[key[1]]
+            for position in style.label_positions:
+                for offset in style.leader_offsets:
+                    for sign in (1, -1):
+                        yield (
+                            _candidate_point(start_point, end_point, position, sign * offset, bow),
+                            position,
+                            sign * offset,
+                            None,
+                            None,
+                        )
+            return
         if kind == "variance":
             node = key[0]
             rect = rects[node]
@@ -629,6 +669,7 @@ def place_labels(
                     None,
                 )
 
+
     for sweep in range(MAX_SWEEPS):
         paths = edge_paths(model, layout, style, loop_choices)
         by_key: dict[tuple[str, str], list[EdgePath]] = {}
@@ -647,63 +688,72 @@ def place_labels(
             own_paths = by_key.get(key, [])
             foreign = [path for path in paths if path.key != key]
 
-            best_cost = None
-            best = None
             foreign_nodes = [
                 rect for name, rect in rects.items() if not (kind == "variance" and name == key[0])
             ]
-            for point, position, offset, direction, looseness in candidates_for(
-                key, text, bow, kind
-            ):
-                rect = label_rect(point, text, style)
-                arc_penalty = 0.0
-                if kind == "variance":
-                    # the loop's ARC must not be flung across a neighbour to make room for its
-                    # label. Scoring only the label sent loops sideways into adjacent nodes, which
-                    # showed up as label-node collisions going UP across the battery.
-                    arc = loop_path(layout[key[0]], rects[key[0]], direction, looseness)
-                    arc_path = EdgePath(key, "variance", arc)
-                    arc_penalty = LOOP_ARC_WEIGHT * sum(
-                        arc_path.length_inside(node) for node in foreign_nodes
-                    )
-                    # ...and the loop's own arc is an obstacle for its OWN label. Everywhere else
-                    # a label may sit on its own edge, but a `1/4` bisected by the very loop it
-                    # annotates is the most visible defect in a crowded figure, so this one case
-                    # is the exception.
-                    arc_penalty += OWN_LOOP_ARC_WEIGHT * arc_path.length_inside(rect)
-                own_area = max(rect.width * rect.height, 1e-9)
-                penalty = LABEL_OVERLAP_WEIGHT * sum(
-                    rect.overlap(other) for other in others
-                ) / own_area
-                penalty += NODE_OVERLAP_WEIGHT * sum(
-                    rect.overlap(node) for node in nodes
-                ) / own_area
-                penalty += FOREIGN_EDGE_WEIGHT * sum(path.length_inside(rect) for path in foreign)
-                ambiguity = 0.0
-                if own_paths and foreign:
-                    own_distance = min(path.distance_to(point) for path in own_paths)
-                    foreign_distance = min(path.distance_to(point) for path in foreign)
-                    ambiguity = max(0.0, own_distance - foreign_distance)
-                cost = (
-                    penalty + AMBIGUITY_WEIGHT * ambiguity + arc_penalty,
-                    abs(position - 0.5),
-                    abs(offset),
-                    0.0 if direction is None else LOOP_DIRECTIONS.index(direction),
-                    0.0 if looseness is None else LOOP_LOOSENESSES.index(looseness),
-                )
-                if best_cost is None or cost < best_cost:
-                    best_cost = cost
-                    best = (point, position, offset, direction, looseness)
-                if cost[0] == 0.0 and cost[1] == 0.0 and cost[2] == 0.0 and cost[3] == 0.0 and cost[4] == 0.0:
-                    break  # the default is already clear; nothing can beat it
 
-            point, position, offset, direction, looseness = best
+            def evaluate(stream, leader: bool):
+                best_cost = best = None
+                for point, position, offset, direction, looseness in stream:
+                    rect = label_rect(point, text, style)
+                    arc_penalty = 0.0
+                    if kind == "variance":
+                        # the loop's ARC must not be flung across a neighbour to make room for its
+                        # label, and its own arc is an obstacle for its own label -- the one place
+                        # a label may not sit on its own edge.
+                        arc = loop_path(layout[key[0]], rects[key[0]], direction, looseness)
+                        arc_path = EdgePath(key, "variance", arc)
+                        arc_penalty = LOOP_ARC_WEIGHT * sum(
+                            arc_path.length_inside(node) for node in foreign_nodes
+                        )
+                        arc_penalty += OWN_LOOP_ARC_WEIGHT * arc_path.length_inside(rect)
+                    own_area = max(rect.width * rect.height, 1e-9)
+                    penalty = LABEL_OVERLAP_WEIGHT * sum(
+                        rect.overlap(other) for other in others
+                    ) / own_area
+                    penalty += NODE_OVERLAP_WEIGHT * sum(
+                        rect.overlap(node) for node in nodes
+                    ) / own_area
+                    penalty += FOREIGN_EDGE_WEIGHT * sum(
+                        path.length_inside(rect) for path in foreign
+                    )
+                    ambiguity = 0.0
+                    if own_paths and foreign:
+                        own_distance = min(path.distance_to(point) for path in own_paths)
+                        foreign_distance = min(path.distance_to(point) for path in foreign)
+                        ambiguity = max(0.0, own_distance - foreign_distance)
+                    cost = (
+                        penalty + AMBIGUITY_WEIGHT * ambiguity + arc_penalty,
+                        abs(position - 0.5),
+                        abs(offset),
+                        0.0 if direction is None else LOOP_DIRECTIONS.index(direction),
+                        0.0 if looseness is None else LOOP_LOOSENESSES.index(looseness),
+                    )
+                    if best_cost is None or cost < best_cost:
+                        best_cost = cost
+                        best = (point, position, offset, direction, looseness, leader)
+                    if all(component == 0.0 for component in cost):
+                        break  # the default is already clear; nothing can beat it
+                return best_cost, best
+
+            best_cost, best = evaluate(candidates_for(key, text, bow, kind), False)
+            # A leader is for a label that could not be placed legibly at all -- still covering a
+            # foreign line, or still unattributable. Reaching for one otherwise litters an
+            # uncrowded diagram with hairlines, which is why this is a second pass and not an
+            # extra row of candidates competing on cost.
+            if style.leader_lines and best_cost is not None and best_cost[0] > LEADER_TRIGGER:
+                far_cost, far_best = evaluate(candidates_for(key, text, bow, kind, far=True), True)
+                if far_cost is not None and far_cost[0] + LEADER_PENALTY < best_cost[0]:
+                    best_cost, best = far_cost, far_best
+
+            point, position, offset, direction, looseness, needs_leader = best
             if not style.avoid_label_collisions:
                 if kind == "variance":
                     chosen.pop(key, None)
                     continue
                 point = _candidate_point(layout[key[0]], layout[key[1]], 0.5, 0.0, bow)
                 position, offset, direction, looseness = 0.5, 0.0, None, None
+                needs_leader = False
 
             if kind == "variance" and best_cost is not None and best_cost[0] == 0.0 and (
                 direction == DEFAULT_LOOP_DIRECTION and looseness == DEFAULT_LOOP_LOOSENESS
@@ -715,10 +765,34 @@ def place_labels(
                 loop_choices[key[0]] = (DEFAULT_LOOP_DIRECTION, DEFAULT_LOOP_LOOSENESS)
                 continue
 
-            placement = LabelPlacement(position, offset, point, direction, looseness)
+            leader_to = None
+            if needs_leader:
+                # Anchor on the label's OWN edge, nearest where the label ended up. For a self-loop
+                # the arc must be rebuilt at the direction just CHOSEN: `own_paths` was sampled
+                # from the loop's previous direction this sweep, so anchoring to it points the
+                # hairline at where the loop used to be. Caught by the anchor test, not by eye.
+                if kind == "variance":
+                    anchor_points = loop_path(
+                        layout[key[0]], rects[key[0]], direction, looseness
+                    )
+                elif own_paths:
+                    anchor_points = tuple(pt for path in own_paths for pt in path.points)
+                else:
+                    anchor_points = ()
+                if anchor_points:
+                    leader_to = min(
+                        anchor_points,
+                        key=lambda pt: math.hypot(pt[0] - point[0], pt[1] - point[1]),
+                    )
+            placement = LabelPlacement(
+                position, offset, point, direction, looseness, leader_to
+            )
             if chosen.get(key) != placement:
                 changed = True
             chosen[key] = placement
+            if leader_to is not None:
+                # the hairline is ink like any other: later labels must avoid it
+                paths.append(EdgePath(key, "leader", (point, leader_to)))
             if kind == "variance":
                 loop_choices[key[0]] = (direction, looseness)
 

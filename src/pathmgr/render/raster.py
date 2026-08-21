@@ -324,6 +324,21 @@ def draw_on_axes(
             fallback=_arc_midpoint(start, end, rad),
         )
 
+    # -- leader lines --------------------------------------------------------------------
+    # Under the label text (zorder 4 against the label's 6) so the hairline runs to the label and
+    # stops visually at it, matching what TikZ does by clipping at the node border.
+    for placement in placements.values():
+        if placement.leader_to is None:
+            continue
+        axes.plot(
+            [placement.point[0], placement.leader_to[0]],
+            [placement.point[1], placement.leader_to[1]],
+            linewidth=style.leader_width,
+            color=style.leader_colour,
+            zorder=4,
+            solid_capstyle="butt",
+        )
+
     # -- frame -------------------------------------------------------------------------
     min_x, min_y, max_x, max_y = layout.bounds()
     pad = 0.9

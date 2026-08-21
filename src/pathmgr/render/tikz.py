@@ -112,7 +112,7 @@ class _Colours:
         ]
 
 
-def _preamble(style: DiagramStyle, colours: "_Colours") -> list[str]:
+def _preamble(style: DiagramStyle, colours: "_Colours", leaders: bool = False) -> list[str]:
     return [
         "\\begin{tikzpicture}[",
         f"  every node/.style={{font=\\{style.font_size}}},",
@@ -132,6 +132,14 @@ def _preamble(style: DiagramStyle, colours: "_Colours") -> list[str]:
         # NO arrow tips on a co-path -- that is the whole point
         f"  pmCopath/.style={{line width={style.copath_width}pt}},",
         "  pmLabel/.style={midway, fill=white, inner sep=1pt},",
+        *(
+            [
+                f"  pmLeader/.style={{line width={style.leader_width}pt, "
+                f"draw={colours.name(style.leader_colour)}}},"
+            ]
+            if leaders
+            else []
+        ),
         "]",
     ]
 
@@ -166,9 +174,15 @@ def to_tikz(
     highlighting = highlight is not None
 
     colours = _Colours()
-    body = _preamble(style, colours)
     lines: list[str] = []
     placements = place_labels(model, layout, style, labelled_edges(model, style))
+    leaders = sorted(
+        (key, placement)
+        for key, placement in placements.items()
+        if placement.leader_to is not None
+    )
+    body = _preamble(style, colours, leaders=bool(leaders))
+    emitted_labels: set[str] = set()
     # bend only the edges whose straight path would run through a third node; everything else is
     # left exactly as it was, so a figure with no crossings is byte-identical to before routing
     bends = route_edges(model, layout, style) if style.route_edges_around_nodes else {}
@@ -192,6 +206,7 @@ def to_tikz(
         node = _label_node(
             label, style, hot, highlighting, colours,
             placements.get((edge.src, edge.dst)), _direction(layout, edge.src, edge.dst),
+            name=_leader_name(leaders, (edge.src, edge.dst), emitted_labels),
         )
         connector = _bend_connector(bends.get((edge.src, edge.dst), 0.0))
         body.append(
@@ -210,10 +225,12 @@ def to_tikz(
         )
         label = style.edge_label((edge.a, edge.b), edge.value)
         loop = placements.get((edge.a, edge.a)) if edge.is_variance else None
+        key = (edge.a, edge.a) if edge.is_variance else (edge.a, edge.b)
         node = _label_node(
             label, style, hot, highlighting, colours,
             loop if edge.is_variance else placements.get((edge.a, edge.b)),
             None if edge.is_variance else _direction(layout, edge.a, edge.b),
+            name=_leader_name(leaders, key, emitted_labels),
         )
         if edge.is_variance:
             body.append(
@@ -242,6 +259,7 @@ def to_tikz(
         node = _label_node(
             label, style, hot, highlighting, colours,
             placements.get((copath.a, copath.b)), _direction(layout, copath.a, copath.b),
+            name=_leader_name(leaders, (copath.a, copath.b), emitted_labels),
         )
         if seen == 0:
             connector = _bend_connector(bends.get((copath.a, copath.b), 0.0))
@@ -251,6 +269,16 @@ def to_tikz(
             f"  \\draw[{options}] ({_node_id(copath.a)}) {connector} "
             f"{node}({_node_id(copath.b)});"
         )
+
+    # -- leader lines ------------------------------------------------------------------
+    # Drawn last so they sit over the edges but under nothing; TikZ clips each at the named
+    # label node's border, which is why the label had to be named rather than positioned twice.
+    for index, (_key, placement) in enumerate(leaders):
+        name = f"pmLbl{index}"
+        if name not in emitted_labels:
+            continue  # its edge was not drawn (e.g. a variance loop hidden while highlighting)
+        x, y = placement.leader_to
+        body.append(f"  \\draw[pmLeader] ({name}) -- ({x:.3f},{y:.3f});")
 
     # -- caption -----------------------------------------------------------------------
     if highlighting and caption_chain:
@@ -342,6 +370,22 @@ def _loop_connector(placement) -> str:
     )
 
 
+def _leader_name(leaders, key, emitted: set[str] | None = None) -> str | None:
+    """A stable TikZ node name for a label that a leader has to reach, else ``None``.
+
+    Records the name in ``emitted`` so the leader pass can tell which nodes really exist: an edge
+    that is skipped (a variance loop hidden by ``draws_variance`` while a chain is highlighted)
+    never creates its node, and drawing to it is a hard TeX error, not a cosmetic one.
+    """
+    for index, (leader_key, _placement) in enumerate(leaders):
+        if leader_key == key:
+            name = f"pmLbl{index}"
+            if emitted is not None:
+                emitted.add(name)
+            return name
+    return None
+
+
 def _label_node(
     label: str,
     style: DiagramStyle,
@@ -350,6 +394,7 @@ def _label_node(
     colours: "_Colours",
     placement=None,
     direction: tuple[float, float] | None = None,
+    name: str | None = None,
 ) -> str:
     """A TikZ ``node`` for an edge label, honouring the collision-avoiding placement.
 
@@ -359,6 +404,9 @@ def _label_node(
     if not label:
         return ""
     options = ["pmLabel"]
+    if name is not None:
+        # naming the node lets TikZ draw the leader to it and clip at its border for us
+        options.append(f"name={name}")
     if hot:
         options.append(f"text={colours.name(style.highlight_colour)}")
     elif highlighting and style.fade_unhighlighted:

@@ -998,17 +998,11 @@ def test_the_collision_metric_sees_a_deliberate_overlap():
     """The metric has to be able to fail, or reporting it proves nothing."""
     from pathmgr.render.diagnostics import collision_report
 
-    model = pm.from_text(
-        """
-        positive: V
-        y ~ b1*x1 + b2*x2
-        x1 ~~ V*x1
-        x2 ~~ V*x2
-        """
-    )
-    # x1 and x2 stacked almost on top of each other: their labels cannot both be clear
-    cramped = Layout({"x1": (0.0, 0.0), "x2": (0.04, 0.0), "y": (1.0, 0.02)})
-    report = collision_report(model, cramped, DiagramStyle())
+    # the wide-label model squeezed until no placement can be clean -- and with leaders off, so
+    # the metric is measuring the placement pass rather than its escape hatch
+    model = _oversized_label_model()
+    cramped = _oversized_layout(scale=0.3)
+    report = collision_report(model, cramped, DiagramStyle(leader_lines=False))
     assert report.collisions, "a deliberately impossible layout reported no collisions"
     assert "label" in report.summary()
 
@@ -1043,3 +1037,138 @@ def test_a_superscript_and_subscript_on_one_base_stack_rather_than_add():
     # stacked: the pair costs the wider of the two, not their sum
     assert both < just_sub + just_sup - style.glyph_width + 1e-9
     assert both >= max(just_sub, just_sup) - 1e-9
+
+
+# ======================================================================================
+# leader lines (task-20260821-161359, item 2)
+# ======================================================================================
+_SEGREGATION = "(V_A*(1 - rho_y*V_A/(V_A + V_E))/2)"
+
+
+def _oversized_label_model():
+    """The shape that motivated leader lines: a label wider than any gap around its node.
+
+    Modelled on the writeup's genetic-values figure -- two parents, two offspring, environment
+    folded onto the phenotype -- where the offspring segregation variance renders as a nested
+    fraction. Written out here rather than imported, because a pathMgr test may not depend on
+    another project's repo.
+    """
+    kids = ("o1", "o2")
+    lines = [
+        "latent: g_m, g_p, g_o1, g_o2",
+        "positive: V_A, V_E",
+        "real: rho_y",
+        "g_m ~~ V_A*g_m",
+        "g_p ~~ V_A*g_p",
+        *[f"g_{k} ~ 1/2*g_m + 1/2*g_p" for k in kids],
+        *[f"g_{k} ~~ {_SEGREGATION}*g_{k}" for k in kids],
+        *[f"y_{w} ~ g_{w}" for w in ("m", "p") + kids],
+        *[f"y_{w} ~~ V_E*y_{w}" for w in ("m", "p") + kids],
+        "y_m -- [rho_y]*y_p",
+    ]
+    return pm.from_text("\n".join(lines))
+
+
+def _oversized_layout(scale: float = 0.45):
+    """The vertical arrangement, compressed until the wide label genuinely cannot be placed.
+
+    Vertical because that is the layout the figure's author had to abandon: every phenotype
+    directly under or over its own genetic value. Compressed because at full size there is enough
+    room and no leader is needed -- which is itself the property the first test checks.
+    """
+    base = {
+        "y_m": (0.6, 5.2), "g_m": (0.6, 3.4),
+        "y_p": (9.4, 5.2), "g_p": (9.4, 3.4),
+        "g_o1": (3.3, 1.6), "y_o1": (3.3, 0.0),
+        "g_o2": (6.7, 1.6), "y_o2": (6.7, 0.0),
+    }
+    return Layout({k: (x * scale, y * scale) for k, (x, y) in base.items()})
+
+
+def test_a_leader_line_appears_only_when_the_label_cannot_be_placed():
+    """Leaders on an uncrowded diagram are noise, so the trigger is unresolvability, not distance."""
+    from pathmgr.render.placement import labelled_edges as build, place_labels
+
+    style = DiagramStyle()
+    # the same model with room to breathe: no leader, because none is needed
+    roomy = _oversized_label_model()
+    roomy_layout = _oversized_layout(scale=1.0).completed(roomy)
+    placements = place_labels(roomy, roomy_layout, style, build(roomy, style))
+    assert not any(p.leader_to for p in placements.values()), "leader on an uncrowded diagram"
+
+    crowded = _oversized_label_model()
+    crowded_layout = _oversized_layout().completed(crowded)
+    placed = place_labels(crowded, crowded_layout, style, build(crowded, style))
+    assert any(p.leader_to for p in placed.values()), "no leader where one is needed"
+
+
+def test_a_leader_line_resolves_what_placement_alone_could_not():
+    """The measured claim: turning leaders on strictly reduces what is still colliding."""
+    from pathmgr.render.diagnostics import collision_report
+
+    model, layout = _oversized_label_model(), _oversized_layout()
+    without = collision_report(model, layout, DiagramStyle(leader_lines=False))
+    with_leaders = collision_report(model, layout, DiagramStyle(leader_lines=True))
+    assert with_leaders.total < without.total, (
+        f"leaders did not help: {without.summary()} -> {with_leaders.summary()}"
+    )
+
+
+def test_a_leader_anchors_on_the_edge_it_annotates():
+    """A hairline to the wrong edge is worse than no hairline."""
+    from pathmgr.render.placement import (
+        DEFAULT_LOOP_DIRECTION,
+        DEFAULT_LOOP_LOOSENESS,
+        EdgePath,
+        labelled_edges as build,
+        loop_path,
+        node_rect,
+        place_labels,
+    )
+
+    model = _oversized_label_model()
+    layout = _oversized_layout().completed(model)
+    style = DiagramStyle()
+    placements = place_labels(model, layout, style, build(model, style))
+    for key, placement in placements.items():
+        if placement.leader_to is None:
+            continue
+        if key[0] == key[1]:
+            direction = placement.loop_direction or DEFAULT_LOOP_DIRECTION
+            looseness = placement.loop_looseness or DEFAULT_LOOP_LOOSENESS
+            own = EdgePath(key, "variance", loop_path(
+                layout[key[0]], node_rect(key[0], model, layout, style), direction, looseness
+            ))
+        else:
+            continue
+        # the anchor is a point of the label's OWN path, not merely near it
+        assert own.distance_to(placement.leader_to) < 1e-6, key
+
+
+def test_both_back_ends_draw_the_leader():
+    model, layout = _oversized_label_model(), _oversized_layout()
+    style = DiagramStyle()
+    tex = to_tikz(model, layout=layout, style=style)
+    assert "pmLeader/.style" in tex, "leader style not declared"
+    assert tex.count("\\draw[pmLeader]") >= 1, "no leader drawn in tikz"
+    assert "name=pmLbl0" in tex, "the label node must be named for the leader to reach it"
+    # and the raster back end draws one too, without raising
+    import pathlib
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = to_image(model, pathlib.Path(tmp) / "leader.png", layout=layout, style=style)
+        assert out.exists()
+
+
+def test_no_leader_means_no_leader_style_in_the_output():
+    """Declaring an unused style would change every existing figure."""
+    model = pm.from_text("positive: V\na ~~ V*a\nb ~ 2*a\nb ~~ V*b")
+    tex = to_tikz(model, layout=Layout({"a": (0.0, 0.0), "b": (4.0, 0.0)}))
+    assert "pmLeader" not in tex
+
+
+def test_leaders_can_be_switched_off():
+    model, layout = _oversized_label_model(), _oversized_layout()
+    tex = to_tikz(model, layout=layout, style=DiagramStyle(leader_lines=False))
+    assert "pmLeader" not in tex
