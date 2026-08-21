@@ -393,6 +393,39 @@ cannot typeset**: a document macro is defined in the document, and matplotlib's 
 seen it, so `to_image` falls back to the plain expression rather than raising mid-`savefig`. TikZ
 output, which goes to real LaTeX, keeps them.
 
+**A repeated coefficient can be coded into the edge instead of labelled on every edge.**
+`code_repeated_coefficients` (OFF by default — it changes a dense figure by design) lifts any
+coefficient appearing on `coefficient_code_threshold` edges into the legend, drawing those edges with
+a colour **and a dash pattern**. The dash is not decoration: colour alone would fail this module's own
+greyscale principle, and printed it would leave every coded edge an identical black line *with its
+label removed*. Solid is reserved for uncoded edges. Keyed on the **value**, never the edge type, and
+directed/bidirected counted separately — grouping by "self-loop" would state one number for several
+different ones. Highlight wins on colour and width; **the dash survives highlight and fade**, so
+coefficient identity is not erased by studying a chain. Assignment is hashed, not sorted, so it is
+*stable*: a new coefficient does not reshuffle the others and the writeup does not churn. Off when
+`highlight=` is passed. `CoefficientCoding.coded` is the elided set, exposed as data —
+`coefficient_legend_tikz` is a convenience built on it, never the only route.
+
+**Escape hatches, because automation will never win the hardest figures.**
+`label_placement_overrides` sets *where* a label goes (`label_overrides` only ever set its text),
+`loop_overrides` aims a variance loop, and `suppressed_labels` removes one entirely. All keyed either
+way round, like `label_overrides`. An overridden label is still an obstacle, so pinning one by hand
+does not quietly break its neighbours. Suppression is enforced in `edge_label`, not per back end —
+honouring it in placement and forgetting it in a renderer is exactly what the moved-loop regression
+was made of.
+
+**`diagnose()` reports; it does not fix** — following `edge_node_crossings`. It covers **model**
+health as well as layout, because a figure that draws beautifully from a model that cannot be
+resolved is the worse failure: it flags a co-path declared by `correlation=` on a node carrying
+another co-path (one person with two mates — every half-sibling pedigree), which the engines raise on.
+A figure script asserts `diagnose(model, layout, style).ok`.
+
+**A moved self-loop's label is emitted at an absolute coordinate**, never in the path. TikZ puts an
+in-path label at `midway`, which for a loop is *on the arc*, and `pmLabel` is `fill=white` — so the
+label erases the loop it annotates. The broken output compiles clean, scores clean on the collision
+metric, and is stable under the determinism test. Only an assertion on the **emitted** file catches
+it; placement had computed the right point all along and the emitter threw it away.
+
 **Label placement is measured, not eyeballed.** `render/diagnostics.py::collision_report` counts
 and totals label-label, label-**foreign**-edge and label-node overlaps plus ambiguous labels, and a
 placement change is judged by that number across the writeup figures and the battery — you cannot

@@ -39,7 +39,7 @@ from .placement import (
 )
 from .style import DiagramStyle
 
-__all__ = ["Collision", "CollisionReport", "collision_report"]
+__all__ = ["Collision", "CollisionReport", "Diagnosis", "collision_report", "diagnose"]
 
 
 @dataclass(frozen=True)
@@ -152,3 +152,103 @@ def collision_report(
             report.ambiguous.append((key, nearest_foreign - own))
         placed.append((key, rect))
     return report
+
+
+@dataclass
+class Diagnosis:
+    """Everything wrong with a figure, in one object a generator can assert on.
+
+    Two kinds of finding, deliberately together. **Layout** problems make a figure hard to read.
+    **Model** problems make it untrustworthy, and a diagram that draws beautifully from a model that
+    cannot be resolved is the worse failure of the two -- so an API that answers "is this fine to
+    draw AND fine to trust" beats one that only counts overlaps.
+
+    Follows :func:`~pathmgr.render.placement.edge_node_crossings`: it reports, it does not fix.
+    """
+
+    collisions: CollisionReport
+    #: straight edges whose path runs through a third node's box
+    crossings: tuple = ()
+    #: model-level problems: things that will not compute, or will compute the wrong number
+    model_issues: tuple[str, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        """True if there is nothing outstanding. What a figure generator asserts on."""
+        return not self.collisions.collisions and not self.collisions.ambiguous and (
+            not self.crossings and not self.model_issues
+        )
+
+    def summary(self) -> str:
+        return (
+            f"{self.collisions.summary()}  crossings={len(self.crossings)}  "
+            f"model={len(self.model_issues)}"
+        )
+
+    def __str__(self) -> str:
+        lines = [self.summary(), *str(self.collisions).splitlines()[1:]]
+        for crossing in self.crossings:
+            lines.append(f"  crossing: {crossing}")
+        for issue in self.model_issues:
+            lines.append(f"  model: {issue}")
+        return "\n".join(lines)
+
+
+def _model_issues(model: Model) -> tuple[str, ...]:
+    """Model-level findings worth surfacing next to the layout ones.
+
+    The co-path case is here because it cost a real user a real result: declaring two co-paths that
+    share a node -- every half-sibling or in-law pedigree, i.e. one person with two mates -- cannot
+    resolve a declared ``correlation=``, because assortment changes the variance the second one
+    would have to be resolved against. The engines raise ``CoPathVarianceError`` rather than return
+    a wrong number, and this reports the same condition *without* raising, so a figure script can
+    see it coming.
+    """
+    issues: list[str] = []
+    for issue in model.validate():
+        if issue.severity == "error":
+            issues.append(f"[{issue.severity}] {issue.message}")
+    standardized = [c for c in model.copaths if c.is_standardized]
+    for copath in standardized:
+        shared = [
+            other
+            for other in model.copaths
+            if other is not copath and {other.a, other.b} & {copath.a, copath.b}
+        ]
+        if shared:
+            issues.append(
+                f"co-path {copath.a!r} -- {copath.b!r} is declared by correlation but shares a "
+                f"node with another co-path; the engines will raise CoPathVarianceError. Use an "
+                f"explicit coefficient= (raw mu) for these."
+            )
+            break
+    return tuple(issues)
+
+
+def diagnose(
+    model: Model,
+    layout: Layout | None = None,
+    style: DiagramStyle | None = None,
+) -> Diagnosis:
+    """What is still wrong with this figure -- usable as an assertion from a generator script.
+
+    >>> import pathmgr as pm
+    >>> from pathmgr.render import Layout
+    >>> report = diagnose(pm.from_text("y ~ b*x\\nx ~~ V*x\\ny ~~ V*y"), Layout())
+    >>> report.ok
+    True
+
+    A figure-generation script can then fail loudly when a model change quietly makes a figure
+    worse, rather than shipping it:
+
+        assert diagnose(model, layout, style).ok, diagnose(model, layout, style)
+    """
+    from .placement import edge_node_crossings
+
+    style = style or DiagramStyle()
+    layout = (layout or Layout()).completed(model)
+    return Diagnosis(
+        collisions=collision_report(model, layout, style),
+        crossings=tuple(edge_node_crossings(model, layout, style)),
+        model_issues=_model_issues(model),
+    )

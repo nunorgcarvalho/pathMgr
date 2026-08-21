@@ -206,6 +206,19 @@ class DiagramStyle:
     label_overrides: dict[tuple[str, str], str] = field(default_factory=dict)
     #: per-variable label overrides, taking precedence over ``Variable.label``
     node_label_overrides: dict[str, str] = field(default_factory=dict)
+    #: **where** a label goes, as ``(a, b) -> (position, offset)``, bypassing the search for that
+    #: one label. The escape hatch: automation will never be perfect on the hardest figures, and the
+    #: node coordinates in these diagrams are hand-authored, so a user who can place a node but not
+    #: its label has no recourse. An overridden label is still an obstacle, so the others avoid it.
+    label_placement_overrides: dict[tuple[str, str], tuple[float, float]] = field(
+        default_factory=dict
+    )
+    #: where a variance self-loop goes, as ``node -> (direction in degrees, looseness)``
+    loop_overrides: dict[str, tuple[float, float]] = field(default_factory=dict)
+    #: edges whose label is not to be drawn at all. Distinct from an empty ``label_overrides``
+    #: entry: this removes the label from placement entirely rather than drawing an empty box, and
+    #: it reads as intent at the call site.
+    suppressed_labels: frozenset[tuple[str, str]] = frozenset()
     #: render a symbol or subexpression under the name the *document* uses for it, e.g.
     #: ``{V_A0 + V_E: r"\VPo"}``. The analogue of ``node_label_overrides``, keyed by expression
     #: rather than by node, and the channel captions use for symbols the surrounding prose has
@@ -281,7 +294,14 @@ class DiagramStyle:
 
     # -- helpers ----------------------------------------------------------------------
     def edge_label(self, key: tuple[str, str], value: sp.Expr) -> str:
-        """LaTeX math for an edge, honouring any override for that edge."""
+        """LaTeX math for an edge, honouring any override or suppression for that edge.
+
+        Suppression is checked here rather than in each back end so it cannot be honoured by the
+        placement pass and then quietly ignored by whichever renderer forgot -- the failure the
+        moved-loop regression was made of.
+        """
+        if self.suppresses_label(key):
+            return ""
         if key in self.label_overrides:
             return self.label_overrides[key]
         reversed_key = (key[1], key[0])
@@ -290,6 +310,28 @@ class DiagramStyle:
         return coefficient_label(
             value, omit_unit=not self.show_unit_coefficients, latex_names=self.latex_names
         )
+
+    def _either_way(self, mapping, key):
+        """Look ``key`` up in ``mapping`` either way round.
+
+        Matches the convention ``label_overrides`` already uses: a caller should not have to think
+        about which end of an edge they wrote first, least of all for a symmetric edge.
+        """
+        if key in mapping:
+            return mapping[key]
+        return mapping.get((key[1], key[0]))
+
+    def placement_override(self, key: tuple[str, str]):
+        """``(position, offset)`` for this edge's label, or ``None`` to let the search decide."""
+        return self._either_way(self.label_placement_overrides, key)
+
+    def loop_override(self, node: str):
+        """``(direction, looseness)`` for this node's variance loop, or ``None``."""
+        return self.loop_overrides.get(node)
+
+    def suppresses_label(self, key: tuple[str, str]) -> bool:
+        """True if this edge's label should not be drawn at all."""
+        return key in self.suppressed_labels or (key[1], key[0]) in self.suppressed_labels
 
     def coefficient_coding(self, model, highlighting: bool = False):
         """The coefficient coding for ``model`` under this style, or an empty one.
@@ -341,6 +383,8 @@ class DiagramStyle:
         Overrides still win, as everywhere else in this class.
         """
         key = (copath.a, copath.b)
+        if self.suppresses_label(key):
+            return ""
         if key in self.label_overrides or (key[1], key[0]) in self.label_overrides:
             return self.edge_label(key, copath.declared)
         if not copath.is_standardized:

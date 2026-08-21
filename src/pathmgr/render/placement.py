@@ -325,19 +325,23 @@ def labelled_edges(
     """
     out: list[tuple[tuple[str, str], str, float, str]] = []
 
+    def dropped(kind: str, key: tuple[str, str]) -> bool:
+        """Suppressed by the caller, or lifted into the legend by coefficient coding."""
+        return style.suppresses_label(key) or coded(kind, key)
+
     def coded(kind: str, key: tuple[str, str]) -> bool:
         # an edge whose coefficient moved into the legend draws no label, so placement must not
         # reserve room for one -- that space is the whole point of coding it
         return coding is not None and coding.for_edge(kind, key) is not None
 
     for edge in model.directed_edges:
-        if coded("directed", (edge.src, edge.dst)):
+        if dropped("directed", (edge.src, edge.dst)):
             continue
         text = style.edge_label((edge.src, edge.dst), edge.coeff)
         if text:
             out.append(((edge.src, edge.dst), text, 0.0, "directed"))
     for edge in model.bidirected_edges:
-        if coded("bidirected", (edge.a, edge.b)):
+        if dropped("bidirected", (edge.a, edge.b)):
             continue
         if edge.is_variance:
             if not style.draws_variance(False):
@@ -354,6 +358,8 @@ def labelled_edges(
         pair = frozenset((copath.a, copath.b))
         index = seen.get(pair, 0)
         seen[pair] = index + 1
+        if style.suppresses_label((copath.a, copath.b)):
+            continue
         text = style.copath_label(copath)
         if text:
             out.append(((copath.a, copath.b), text, -0.12 * index, "copath"))
@@ -745,6 +751,32 @@ def place_labels(
                     if all(component == 0.0 for component in cost):
                         break  # the default is already clear; nothing can beat it
                 return best_cost, best
+
+            override = (
+                style.loop_override(key[0]) if kind == "variance"
+                else style.placement_override(key)
+            )
+            if override is not None:
+                # bypass the search entirely, but the result is still registered as an obstacle
+                # below, so every other label avoids where the caller put this one
+                if kind == "variance":
+                    direction, looseness = override
+                    half_height = style.raster_line_height / 2.0 + style.label_pad
+                    point = loop_label_point(
+                        layout[key[0]], rects[key[0]], direction, looseness,
+                        clearance=half_height,
+                    )
+                    placement = LabelPlacement(0.5, 0.0, point, direction, looseness)
+                else:
+                    position, offset = override
+                    point = _candidate_point(layout[key[0]], layout[key[1]], position, offset, bow)
+                    placement = LabelPlacement(position, offset, point)
+                if chosen.get(key) != placement:
+                    changed = True
+                chosen[key] = placement
+                if kind == "variance":
+                    loop_choices[key[0]] = (placement.loop_direction, placement.loop_looseness)
+                continue
 
             best_cost, best = evaluate(candidates_for(key, text, bow, kind), False)
             # A leader is for a label that could not be placed legibly at all -- still covering a

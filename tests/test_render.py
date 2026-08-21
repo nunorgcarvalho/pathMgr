@@ -1505,3 +1505,129 @@ def test_an_unmoved_loop_still_emits_the_legacy_in_path_label():
     tex = to_tikz(model, layout=Layout({"a": (0.0, 0.0), "b": (4.0, 0.0)}))
     assert "to[loop above, looseness=6, in=120, out=60] node[pmLabel]" in tex
     assert "pmLabelAt" not in tex
+
+
+# ======================================================================================
+# manual overrides and diagnose() (task-20260821-161359, items 3 and 4)
+# ======================================================================================
+def _override_model():
+    return pm.from_text("positive: V\nb ~ 2*a\na ~~ V*a\nb ~~ V*b")
+
+
+def _override_layout():
+    return Layout({"a": (0.0, 0.0), "b": (3.0, 0.0)})
+
+
+def test_a_positional_override_bypasses_the_search():
+    from pathmgr.render.placement import labelled_edges as build, place_labels
+
+    model, layout = _override_model(), _override_layout().completed(_override_model())
+    style = DiagramStyle(label_placement_overrides={("a", "b"): (0.25, 0.5)})
+    placed = place_labels(model, layout, style, build(model, style))[("a", "b")]
+    assert (placed.position, placed.offset) == (0.25, 0.5)
+
+
+def test_a_positional_override_is_keyed_either_way_round():
+    """Matching the convention label_overrides already uses: direction should not be a puzzle."""
+    from pathmgr.render.placement import labelled_edges as build, place_labels
+
+    model, layout = _override_model(), _override_layout().completed(_override_model())
+    style = DiagramStyle(label_placement_overrides={("b", "a"): (0.3, 0.4)})
+    placed = place_labels(model, layout, style, build(model, style))[("a", "b")]
+    assert (placed.position, placed.offset) == (0.3, 0.4)
+
+
+def test_an_overridden_label_is_still_an_obstacle_for_the_others():
+    """Otherwise placing one label by hand quietly breaks its neighbours."""
+    from pathmgr.render.placement import label_rect, labelled_edges as build, place_labels
+
+    model = pm.from_text(
+        "positive: V\nb ~ 2*a\nc ~ 3*a\na ~~ V*a\nb ~~ V*b\nc ~~ V*c"
+    )
+    layout = Layout({"a": (0.0, 0.0), "b": (3.0, 0.3), "c": (3.0, -0.3)}).completed(model)
+    style = DiagramStyle(label_placement_overrides={("a", "b"): (0.5, 0.0)})
+    placements = place_labels(model, layout, style, build(model, style))
+    texts = {key: text for key, text, _b, _k in build(model, style)}
+    fixed = label_rect(placements[("a", "b")].point, texts[("a", "b")], style)
+    other = label_rect(placements[("a", "c")].point, texts[("a", "c")], style)
+    assert fixed.overlap(other) == 0.0, "the free label ignored the pinned one"
+
+
+def test_a_loop_placement_can_be_overridden():
+    from pathmgr.render.placement import labelled_edges as build, place_labels
+
+    model, layout = _override_model(), _override_layout().completed(_override_model())
+    style = DiagramStyle(loop_overrides={"a": (180.0, 8.0)})
+    placed = place_labels(model, layout, style, build(model, style))[("a", "a")]
+    assert (placed.loop_direction, placed.loop_looseness) == (180.0, 8.0)
+    assert "in=210, out=150" in to_tikz(model, layout=_override_layout(), style=style)
+
+
+def test_a_suppressed_label_is_not_placed_or_drawn():
+    """Distinct from an empty override: it leaves placement entirely rather than reserving a box."""
+    from pathmgr.render.placement import labelled_edges as build, place_labels
+
+    model, layout = _override_model(), _override_layout().completed(_override_model())
+    style = DiagramStyle(suppressed_labels=frozenset({("a", "b")}))
+    placements = place_labels(model, layout, style, build(model, style))
+    assert ("a", "b") not in placements
+    tex = to_tikz(model, layout=_override_layout(), style=style)
+    directed = [line for line in tex.splitlines() if "(a) -- (b)" in line or "(a) -- node" in line]
+    assert directed, "the suppressed edge was not drawn at all"
+    assert all("node[pmLabel" not in line for line in directed), directed
+    # and only that edge: a's own variance loop keeps its label
+    assert any("(a) to[loop above" in line and "node[pmLabel" in line for line in tex.splitlines())
+
+
+def test_diagnose_reports_a_clean_figure_as_ok():
+    from pathmgr.render.diagnostics import diagnose
+
+    model = pm.from_text("positive: V\ny ~ b*x\nx ~~ V*x\ny ~~ V*y")
+    assert diagnose(model, Layout()).ok
+
+
+def test_diagnose_is_usable_as_an_assertion_and_says_what_is_wrong():
+    from pathmgr.render.diagnostics import diagnose
+
+    report = diagnose(_oversized_label_model(), _oversized_layout(scale=0.3),
+                      DiagramStyle(leader_lines=False))
+    assert not report.ok
+    assert "label" in str(report)
+
+
+def test_diagnose_reports_model_health_not_only_layout():
+    """A figure that draws beautifully from a model that cannot be resolved is the worse failure.
+
+    One person with two mates -- every half-sibling and in-law pedigree -- cannot have its co-paths
+    declared by correlation, because assortment changes the variance the second one resolves
+    against. The engines raise; this reports the same condition without raising, so a figure script
+    can see it coming.
+    """
+    from pathmgr.render.diagnostics import diagnose
+
+    shared = pm.from_text(
+        """
+        positive: V
+        y_1 ~~ V*y_1
+        y_2 ~~ V*y_2
+        y_P ~~ V*y_P
+        y_1 -- [rho]*y_P [couple1]
+        y_2 -- [rho]*y_P [couple2]
+        """
+    )
+    report = diagnose(shared, Layout())
+    assert not report.ok
+    assert any("CoPathVarianceError" in issue for issue in report.model_issues), report.model_issues
+
+    # and the raw-mu form of the same pedigree is fine, because it needs no resolution
+    raw = pm.from_text(
+        """
+        positive: V
+        y_1 ~~ V*y_1
+        y_2 ~~ V*y_2
+        y_P ~~ V*y_P
+        y_1 -- mu*y_P [couple1]
+        y_2 -- mu*y_P [couple2]
+        """
+    )
+    assert not diagnose(raw, Layout()).model_issues
