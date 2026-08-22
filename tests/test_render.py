@@ -1635,3 +1635,66 @@ def test_diagnose_reports_model_health_not_only_layout():
     assert not diagnose(shared, Layout()).model_issues, (
         "the shared-node co-path finding outlived the limitation it described"
     )
+
+
+# ======================================================================================
+# the consistency advisory (task-20260821-180530)
+# ======================================================================================
+def test_identical_labels_treated_differently_raise_an_advisory():
+    """Two structurally symmetric nodes with the same label, one leadered and one not.
+
+    Every other check here is satisfied -- both are collision-free -- so nothing else can see it,
+    and it reads lopsided to a human. Reported, never fixed: on the figure that prompted this, the
+    asymmetric layout was the ONLY zero-collision configuration and every symmetric alternative
+    cost collisions, so a rule enforcing consistency would have to trade collisions for symmetry,
+    which is an editorial call that varies per figure.
+    """
+    from pathmgr.render.diagnostics import diagnose
+
+    model = _oversized_label_model()
+    report = diagnose(model, _oversized_layout(scale=0.45), DiagramStyle())
+    leader_advisories = [a for a in report.advisories if "leader line" in a]
+    assert leader_advisories, report.advisories
+    advisory = leader_advisories[0]
+    assert "Nothing is wrong" in advisory, "an advisory must not read as a defect"
+    assert "COST collisions" in advisory, "it must warn that 'fixing' it can make things worse"
+    assert "loop_overrides" in advisory, "name the override that would make them match"
+
+
+def test_an_advisory_does_not_make_a_figure_not_ok():
+    """A generator asserting `.ok` must not start failing over a non-defect.
+
+    Asserted on the invariant rather than through a fixture: whether any particular figure happens
+    to be otherwise clean is incidental, and the property is that `ok` is computed from defects
+    only.
+    """
+    from pathmgr.render.diagnostics import CollisionReport, Diagnosis
+
+    clean_but_advised = Diagnosis(
+        collisions=CollisionReport(n_labels=4),
+        advisories=("two labels read the same but are placed differently",),
+    )
+    assert clean_but_advised.advisories
+    assert clean_but_advised.ok, "an advisory is not a defect and must not fail .ok"
+
+    with_defect = Diagnosis(
+        collisions=CollisionReport(n_labels=4), model_issues=("[error] something real",)
+    )
+    assert not with_defect.ok
+
+
+def test_no_advisory_when_identical_labels_are_treated_alike():
+    from pathmgr.render.diagnostics import diagnose
+
+    # roomy: every label sits at its own midpoint, so all treatments match
+    report = diagnose(_oversized_label_model(), _oversized_layout(scale=1.0), DiagramStyle())
+    assert not report.advisories, report.advisories
+
+
+def test_no_advisory_when_no_label_is_repeated():
+    from pathmgr.render.diagnostics import diagnose
+
+    model = pm.from_text(
+        "positive: V\ny ~ b1*x1 + b2*x2\nx1 ~~ V*x1\nx2 ~~ V*x2\ny ~~ V*y"
+    )
+    assert not diagnose(model, Layout()).advisories

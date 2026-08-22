@@ -171,10 +171,17 @@ class Diagnosis:
     crossings: tuple = ()
     #: model-level problems: things that will not compute, or will compute the wrong number
     model_issues: tuple[str, ...] = ()
+    #: things a human may want to look at that are NOT defects -- see :func:`_consistency_advisories`
+    advisories: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
-        """True if there is nothing outstanding. What a figure generator asserts on."""
+        """True if there is nothing outstanding. What a figure generator asserts on.
+
+        **Advisories deliberately do not affect this.** They are not defects, and a generator that
+        asserts ``.ok`` must not start failing because a figure has two identically-labelled edges
+        placed differently -- which is often the *correct* outcome.
+        """
         return not self.collisions.collisions and not self.collisions.ambiguous and (
             not self.crossings and not self.model_issues
         )
@@ -182,7 +189,7 @@ class Diagnosis:
     def summary(self) -> str:
         return (
             f"{self.collisions.summary()}  crossings={len(self.crossings)}  "
-            f"model={len(self.model_issues)}"
+            f"model={len(self.model_issues)}  advisories={len(self.advisories)}"
         )
 
     def __str__(self) -> str:
@@ -191,7 +198,78 @@ class Diagnosis:
             lines.append(f"  crossing: {crossing}")
         for issue in self.model_issues:
             lines.append(f"  model: {issue}")
+        for advisory in self.advisories:
+            lines.append(f"  advisory: {advisory}")
         return "\n".join(lines)
+
+
+#: how far apart two identical labels' perpendicular offsets must be, in cm, before the difference
+#: counts as "materially different treatment". Chosen as roughly one label height: below that the
+#: two read as the same treatment with a nudge, which is not worth mentioning.
+CONSISTENCY_OFFSET_TOLERANCE = 0.35
+
+
+def _consistency_advisories(model, layout, style, placements, texts) -> tuple[str, ...]:
+    """Identical labels given materially different treatment -- an ADVISORY, not a defect.
+
+    Two structurally symmetric nodes carrying the same label, one placed inline and the other pushed
+    out with a leader, reads as lopsided to a human while satisfying every metric here: both are
+    collision-free, so nothing else in this module can see it.
+
+    It is reported and **not** fixed, and that is a considered choice rather than laziness. On the
+    figure that prompted it, the asymmetric layout was the *only* zero-collision configuration and
+    every symmetric alternative cost collisions -- so a rule enforcing consistency would have to be
+    "accept collisions to gain symmetry", an editorial judgement that varies per figure and that no
+    measurement here can adjudicate. Handing a human the facts is the right shape.
+
+    Which is also why the wording says nothing is wrong: a reader who "fixes" every advisory without
+    measuring will make figures worse.
+    """
+    by_text: dict[str, list[tuple[tuple[str, str], object]]] = {}
+    for key, placement in placements.items():
+        text = texts.get(key)
+        if text:
+            by_text.setdefault(text, []).append((key, placement))
+
+    out: list[str] = []
+    for text, entries in sorted(by_text.items()):
+        if len(entries) < 2:
+            continue
+        leadered = sorted(key for key, p in entries if p.leader_to is not None)
+        plain = sorted(key for key, p in entries if p.leader_to is None)
+        offsets = [p.offset for _key, p in entries]
+        spread = max(offsets) - min(offsets)
+
+        reason = None
+        if leadered and plain:
+            reason = (
+                f"{len(leadered)} of {len(entries)} use a leader line and the rest do not"
+            )
+        elif spread > CONSISTENCY_OFFSET_TOLERANCE:
+            reason = f"their offsets differ by {spread:.2f}cm"
+        if reason is None:
+            continue
+
+        hint = ""
+        if leadered and plain:
+            model_key, target = plain[0], leadered[0]
+            if target[0] == target[1] and model_key[0] == model_key[1]:
+                matched = placements[model_key]
+                hint = (
+                    f" To make them match, copy the inline one's loop: "
+                    f"loop_overrides={{{target[0]!r}: "
+                    f"({matched.loop_direction:g}, {matched.loop_looseness:g})}}."
+                )
+            else:
+                hint = (
+                    " `label_placement_overrides` can pin them to the same treatment."
+                )
+        out.append(
+            f"{len(entries)} labels read {text!r} but are placed differently ({reason}). "
+            f"Nothing is wrong -- the placer optimised for collisions, and forcing them to match "
+            f"may COST collisions, so measure before changing it.{hint}"
+        )
+    return tuple(out)
 
 
 def _model_issues(model: Model) -> tuple[str, ...]:
@@ -233,8 +311,13 @@ def diagnose(
 
     style = style or DiagramStyle()
     layout = (layout or Layout()).completed(model)
+    coding = style.coefficient_coding(model)
+    edges = labelled_edges(model, style, coding)
+    placements = place_labels(model, layout, style, edges)
+    texts = {key: text for key, text, _bow, _kind in edges}
     return Diagnosis(
         collisions=collision_report(model, layout, style),
         crossings=tuple(edge_node_crossings(model, layout, style)),
         model_issues=_model_issues(model),
+        advisories=_consistency_advisories(model, layout, style, placements, texts),
     )

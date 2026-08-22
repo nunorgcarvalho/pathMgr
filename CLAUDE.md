@@ -418,6 +418,18 @@ does not quietly break its neighbours. Suppression is enforced in `edge_label`, 
 honouring it in placement and forgetting it in a renderer is exactly what the moved-loop regression
 was made of.
 
+**Two method notes, both learned the hard way, both likely to recur.**
+
+- **A mechanism cannot be both the escape hatch and one of the ordinary options it escapes from.**
+  Offering leader-line placements as ordinary candidates carrying a penalty fired *zero* leaders on
+  every real figure, and not because the penalty was mistuned: the penalty that stops an uncrowded
+  diagram sprouting hairlines is necessarily larger than the cost of the collisions leaders exist to
+  fix. The escape hatch has to be a second pass, reached only when the ordinary options have failed.
+- **Measuring a consumer's figure with anything but the consumer's own style call is not measuring
+  their figure.** A reproduction of a reported defect came back clean because it used an
+  approximation of the writeup's style instead of its actual call, which maps a long expression
+  through `latex_names` and blanks several labels. Import their generator and use their style.
+
 **`diagnose()` reports; it does not fix** — following `edge_node_crossings`. It covers **model**
 health as well as layout, because a figure that draws beautifully from a model that cannot be
 resolved is the worse failure: it flags a co-path declared by `correlation=` on a node carrying
