@@ -123,11 +123,24 @@ def test_the_copath_coefficient_is_generation_indexed():
     assert unrolled.mu[0] != unrolled.mu[1], "a fixed mu would be a different model"
     for t, mu in enumerate(unrolled.mu):
         assert sp.simplify(mu - unrolled.rho_y / unrolled.V_P[t]) == 0
+    # The co-paths are now declared by CORRELATION, so there is no per-generation coefficient
+    # written down to compare against -- which is the point of task-20260805-170500: nobody can copy
+    # mu from the wrong generation because nobody writes it. So assert the OBSERVABLE instead, which
+    # is the property mu_t was there to produce.
+    engine = pm.RAMEngine(unrolled.model)
+    # V_A(t) is carried as a free symbol, so a partner's variance and the CHILD's computed variance
+    # agree only once the recursion is applied -- hence the substitution. Without it the ratio is
+    # correct but unsimplified, which is a comparison problem, not a modelling one.
+    recursion = unrolled.recursion_substitutions()
     for couple in pedigree.couples:
-        value = unrolled.model.copath_value(
-            f"y_{couple.maternal}", f"y_{couple.paternal}", process=couple.key
+        t = couple.generation
+        pair = (f"y_{couple.maternal}", f"y_{couple.paternal}")
+        corr = sp.simplify(engine.corr(*pair).subs(recursion))
+        assert sp.simplify(corr - unrolled.rho_y) == 0, (couple, "corr")
+        covariance = engine.cov(*pair).subs(recursion)
+        assert sp.simplify(covariance - (unrolled.rho_y * unrolled.V_P[t]).subs(recursion)) == 0, (
+            couple, t
         )
-        assert sp.simplify(value - unrolled.mu[couple.generation]) == 0
 
 
 def test_holding_mu_constant_is_available_and_is_a_different_model():
@@ -527,3 +540,40 @@ def test_the_equilibrium_can_be_reported_compactly():
     # the numbers are untouched
     assert abs(compact.evaluate({"V_A0": 0.4, "V_E": 0.6, "rho_y": 0.3})["rho_g"]
                - eq.evaluate({"V_A0": 0.4, "V_E": 0.6, "rho_y": 0.3})["rho_g"]) < 1e-12
+
+
+def test_the_declared_correlation_holds_at_every_generation_off_unit_variance():
+    """The acceptance case for task-20260805-170500, and the whole point of the change.
+
+    Every couple gets *exactly* its declared partner correlation, at three generations, with
+    ``V_P(0) = 1.3`` so nothing here is the unit-variance special case -- and without the caller
+    writing ``mu`` anywhere. Before dependency-ordered resolution this could not even be built: the
+    engines refused, and the unroller wrote ``mu_t = rho_y/V_P(t)`` by hand for each generation,
+    which is right for exactly one generation and silently wrong for the next.
+    """
+    pedigree = am_pedigree(3, children_per_couple=2, breeding_children=1)
+    unrolled = g_level_model(pedigree)
+    engine = pm.RAMEngine(unrolled.model)
+    recursion = unrolled.recursion_substitutions()
+    numbers = {
+        unrolled.V_A0: sp.Rational(1, 2),
+        unrolled.V_E: sp.Rational(8, 10),   # V_P(0) = 1.3, NOT 1
+        unrolled.rho_y: sp.Rational(3, 10),
+    }
+    assert sp.simplify((unrolled.V_A0 + unrolled.V_E).subs(numbers) - 1) != 0, "V_P(0) must not be 1"
+
+    generations = {couple.generation for couple in pedigree.couples}
+    assert len(generations) >= 3, "need several generations for this to mean anything"
+    for couple in pedigree.couples:
+        corr = engine.corr(f"y_{couple.maternal}", f"y_{couple.paternal}")
+        got = sp.simplify(corr.subs(recursion).subs(numbers))
+        assert abs(float(sp.N(got)) - 0.3) < 1e-12, (couple.generation, got)
+
+
+def test_nobody_writes_mu_by_hand_any_more():
+    """The generation-indexing trap is gone by construction, not by documentation."""
+    unrolled = g_level_model(am_pedigree(2, children_per_couple=2, breeding_children=1))
+    assert all(c.is_standardized for c in unrolled.model.copaths)
+    assert all(c.coefficient is None for c in unrolled.model.copaths)
+    # `mu` is still REPORTED, because the figures label it -- it is just not what was declared
+    assert unrolled.mu[0] != unrolled.mu[1]

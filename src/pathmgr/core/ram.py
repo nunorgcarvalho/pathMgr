@@ -57,7 +57,13 @@ from dataclasses import dataclass, field
 
 import sympy as sp
 
-from .model import CoPathVarianceError, Model, copath_mu
+from .model import (
+    CoPathVarianceError,
+    Model,
+    copath_mu,
+    copath_resolution_order,
+    node_depths,
+)
 from .units import Units
 
 __all__ = [
@@ -315,20 +321,40 @@ class RAMEngine:
     def _oriented_copaths(self, index: dict[str, int], sigma0: sp.Matrix | None = None):
         """Each co-path in both orientations, as ``(process, near, far, mu)``.
 
-        A co-path declared by its correlation has its ``mu`` derived here from ``sigma0``'s
-        diagonal -- the **co-path-free** variances. Two reasons that is the right source and not
-        merely a convenient one: a co-path induces covariance without causing variance, so the
-        co-path-free variance *is* the variance; and taking it from ``sigma0`` breaks what would
-        otherwise be a circular definition, since ``mu`` is needed to build the full ``Sigma``.
+        A co-path declared by its **correlation** has its ``mu`` derived here, and the order matters:
+        resolving ``mu = rho / (sd_a * sd_b)`` needs the endpoints' *true* variances, and under
+        assortment those depend on the co-paths **upstream** of them -- a co-path does not change the
+        variance of the pair it matches, but it does change their descendants', which is the entire
+        content of the AM dynamics.
+
+        So co-paths are resolved in :func:`~pathmgr.core.model.copath_resolution_order` -- increasing
+        depth of the deeper endpoint -- and each one's variances are computed with only the
+        already-resolved co-paths in play. That is exact rather than approximate: every dependency of
+        a co-path at depth *d* lies at depth *< d*, so nothing needed is missing.
         """
-        oriented = []
-        for copath in self.model.copaths:
+        if sigma0 is None:
+            sigma0 = self.sigma_copath_free()
+        ordered = copath_resolution_order(self.model)
+        depths = node_depths(self.model)
+        if not depths and any(c.is_standardized for c in self.model.copaths):
+            raise CoPathVarianceError(
+                "this model has a directed cycle, so no co-path is upstream of another and a "
+                "declared correlation cannot be resolved in dependency order. Give the co-paths an "
+                "explicit coefficient= (raw mu)."
+            )
+
+        oriented: list[tuple[str, int, int, sp.Expr]] = []
+        for copath in ordered:
             if copath.is_standardized:
-                if sigma0 is None:
-                    sigma0 = self.sigma_copath_free()
-                self._require_copath_free_variance(copath, index, sigma0)
-                mu = copath_mu(copath, sigma0[index[copath.a], index[copath.a]],
-                               sigma0[index[copath.b], index[copath.b]])
+                # variances computed against the co-paths resolved SO FAR, which are exactly the
+                # ones upstream of this pair
+                var_a = self._copath_entry(
+                    index[copath.a], index[copath.a], oriented, sigma0
+                )
+                var_b = self._copath_entry(
+                    index[copath.b], index[copath.b], oriented, sigma0
+                )
+                mu = copath_mu(copath, var_a, var_b, self.model.substitutions())
             else:
                 mu = copath.coefficient
             if mu == 0:
@@ -337,32 +363,7 @@ class RAMEngine:
                 oriented.append((copath.process, index[a], index[b], mu))
         return oriented
 
-    def _require_copath_free_variance(self, copath, index, sigma0) -> None:
-        """Refuse to resolve a declared correlation whose endpoints' variances other co-paths move.
-
-        See :class:`~pathmgr.core.model.CoPathVarianceError`. The test is deliberately
-        conservative: an endpoint ``x`` is treated as affected if it has any non-zero co-path-free
-        covariance with an endpoint of a *different* co-path, since that is what a co-path sequence
-        needs at each end in order to reach ``Var[x]``. Over-refusing costs a clear error message;
-        under-refusing costs a wrong number nobody sees.
-        """
-        for endpoint in (copath.a, copath.b):
-            here = index[endpoint]
-            for other in self.model.copaths:
-                if (other.a, other.b, other.process) == (copath.a, copath.b, copath.process):
-                    continue
-                for far in (other.a, other.b):
-                    if sigma0[here, index[far]] != 0:
-                        raise CoPathVarianceError(
-                            f"co-path {copath.a!r} -- {copath.b!r} is declared by correlation, but "
-                            f"{endpoint!r} is already correlated with {far!r} before assortment, "
-                            f"so the co-path {other.a!r} -- {other.b!r} changes Var[{endpoint}] "
-                            f"and the correlation cannot be resolved from the co-path-free "
-                            f"variances. Give this co-path an explicit coefficient= (raw mu) "
-                            f"instead. See CoPathVarianceError."
-                        )
-
-    def _copath_entry(self, row: int, column: int) -> sp.Expr:
+    def _copath_entry(self, row: int, column: int, oriented=None, sigma0=None) -> sp.Expr:
         """One entry of Sigma, without materialising the whole matrix.
 
         The same sum over sequences of distinct-process co-paths as :meth:`_apply_copaths`, but
@@ -375,8 +376,10 @@ class RAMEngine:
         the number of sequences grows with pedigree depth, so paying ``n^2`` for each is what made
         a five-generation unroll take minutes. Asking for one covariance is the common case.
         """
-        sigma0 = self.sigma_copath_free()
-        oriented = self._oriented_copaths(self._index, sigma0)
+        if sigma0 is None:
+            sigma0 = self.sigma_copath_free()
+        if oriented is None:
+            oriented = self._oriented_copaths(self._index, sigma0)
         total = sigma0[row, column]
         if not oriented:
             return total

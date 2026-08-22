@@ -1598,13 +1598,30 @@ def test_diagnose_is_usable_as_an_assertion_and_says_what_is_wrong():
 def test_diagnose_reports_model_health_not_only_layout():
     """A figure that draws beautifully from a model that cannot be resolved is the worse failure.
 
-    One person with two mates -- every half-sibling and in-law pedigree -- cannot have its co-paths
-    declared by correlation, because assortment changes the variance the second one resolves
-    against. The engines raise; this reports the same condition without raising, so a figure script
-    can see it coming.
+    The specific co-path finding this once carried is gone, because task-20260805-170500 removed the
+    limitation it reported -- dependency-ordered resolution means a shared-node pedigree resolves
+    fine now. What remains is that `validate()` errors surface here, so a figure script sees a model
+    that will not compute before it ships a figure of it.
     """
     from pathmgr.render.diagnostics import diagnose
 
+    # a bidirected edge on an endogenous variable with no disturbance variance: validate() errors
+    broken = pm.from_text(
+        """
+        latent: g_m, g_p
+        positive: V
+        y_m ~ g_m
+        y_p ~ g_p
+        g_m ~~ V*g_m
+        g_p ~~ V*g_p
+        y_m ~~ V*y_p
+        """
+    )
+    report = diagnose(broken, Layout())
+    assert report.model_issues, "an invalid model was reported as fine to trust"
+    assert not report.ok
+
+    # and the pedigree shape that USED to be refused is now clean
     shared = pm.from_text(
         """
         positive: V
@@ -1615,19 +1632,6 @@ def test_diagnose_reports_model_health_not_only_layout():
         y_2 -- [rho]*y_P [couple2]
         """
     )
-    report = diagnose(shared, Layout())
-    assert not report.ok
-    assert any("CoPathVarianceError" in issue for issue in report.model_issues), report.model_issues
-
-    # and the raw-mu form of the same pedigree is fine, because it needs no resolution
-    raw = pm.from_text(
-        """
-        positive: V
-        y_1 ~~ V*y_1
-        y_2 ~~ V*y_2
-        y_P ~~ V*y_P
-        y_1 -- mu*y_P [couple1]
-        y_2 -- mu*y_P [couple2]
-        """
+    assert not diagnose(shared, Layout()).model_issues, (
+        "the shared-node co-path finding outlived the limitation it described"
     )
-    assert not diagnose(raw, Layout()).model_issues

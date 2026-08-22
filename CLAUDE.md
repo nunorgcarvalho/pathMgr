@@ -271,14 +271,18 @@ process bracket is anchored to end-of-line. Diagrams render a declared correlati
 `[\rho_y]`, so the scale is visible in the figure — this is *not* a standardized `Units` model, it
 is one edge stated on the correlation scale.
 
-**Where the correlation form cannot be used yet.** Resolving it needs the endpoints' true
-variances, taken from the co-path-free `Sigma`. That is valid only when no *other* co-path moves
-them. A co-path does not change the variance of the pair it matches (`sigma0[b,a] = 0` for two
-people unrelated before assortment — Sunde's "without causing variance"), but it **does** change
-their descendants' — that is the whole content of the AM dynamics. So the pedigree still declares
-raw `mu[t]`, and both engines raise `CoPathVarianceError` rather than return a number understated
-by the accumulated assortment gain. Lifting this needs the engines to resolve co-paths in
-dependency order.
+**How the correlation form is resolved, and why the order matters.** `mu = rho/(sd_a*sd_b)` needs
+the endpoints' *true* variances. A co-path does not change the variance of the pair it matches
+(`sigma0[b,a] = 0` for two people unrelated before assortment — Sunde's "without causing variance"),
+but it **does** change their descendants' — that is the whole content of the AM dynamics. So the
+engines resolve co-paths in `copath_resolution_order` (increasing depth of the deeper endpoint) and
+compute each one's variances with only the already-resolved co-paths in play. Every dependency of a
+co-path at depth *d* sits at depth *< d*, so this is exact, not approximate. The pedigree therefore
+declares `correlation=rho_y` and **nothing writes `mu_t` by hand** — which is what closes the
+generation-indexing trap for good. `CoPathVarianceError` now fires only for a **cyclic** model,
+where "upstream" has no meaning. Two partners' variances are often equal only *given* the recursion
+the model recorded via `assume`, so the equal-variance test consults those assumptions; without that
+every pedigree result grows a `sqrt` it should not have.
 
 **Why it is not a bidirected edge, and cannot be emulated by one.** Matching induces correlation
 among *all the causes* of the matched variables, so the association propagates **backward** up

@@ -132,30 +132,85 @@ class CoPath:
 
 
 class CoPathVarianceError(ValueError):
-    """A declared correlation cannot be resolved, because its endpoints' variances are not known.
+    """A declared correlation cannot be resolved, because the model has a directed cycle.
 
-    Resolving ``mu = rho / (sd_a * sd_b)`` needs the endpoints' **true** variances. Engines take
-    them from the co-path-free ``Sigma``, which is right exactly when no *other* co-path changes
-    them -- and that is not always so.
+    Resolving ``mu = rho / (sd_a * sd_b)`` needs the endpoints' **true** variances, and under
+    assortment those include the effect of every co-path *upstream* of them. The engines therefore
+    resolve co-paths in :func:`copath_resolution_order` -- increasing depth of the deeper endpoint --
+    so every dependency of a co-path is already known when its turn comes.
 
-    A co-path does not change the variance of the variables it matches: the contribution to
-    ``Var[a]`` would be ``sigma0[a,a] * mu * sigma0[b,a]``, and ``sigma0[b,a]`` is zero for two
-    people who are unrelated before assortment. That is Sunde's "induces covariance without
-    causing variance", and it holds.
+    In a **cyclic** model "upstream" has no meaning: there is no depth, so there is no order, and a
+    declared correlation cannot be resolved at all. Give those co-paths an explicit ``coefficient=``.
 
-    It does **not** extend to their descendants, and assuming it did is a mistake this project
-    made and caught here. Assortment raises the offspring generation's genetic variance -- that is
-    the entire content of the AM dynamics -- so a co-path in one generation changes the variances
-    that a co-path in the *next* generation must be resolved against. Resolving both from the
-    co-path-free ``Sigma`` silently understates the later ones.
-
-    So a declared correlation is currently supported only where the endpoints' variances are
-    co-path-free. Anything else raises this, rather than returning a number that is quietly wrong
-    by the accumulated assortment gain.
+    This used to be raised much more widely, for any co-path whose endpoints another co-path could
+    reach -- which ruled out every half-sibling and in-law pedigree, and was the reason the pedigree
+    unroller wrote ``mu_t`` by hand. The story is worth keeping because the reasoning was subtle: a
+    co-path does *not* change the variance of the pair it matches (the contribution would be
+    ``sigma0[a,a] * mu * sigma0[b,a]``, and ``sigma0[b,a]`` is zero for two people unrelated before
+    assortment), but it *does* change their descendants' -- which is the entire content of the AM
+    dynamics. Resolving a downstream co-path against co-path-free variances silently understated it
+    by the accumulated assortment gain. Ordering by depth fixes that exactly rather than refusing.
     """
 
 
-def copath_mu(copath: "CoPath", var_a: sp.Expr, var_b: sp.Expr) -> sp.Expr:
+def node_depths(model: "Model") -> dict[str, int]:
+    """Longest directed path ending at each node; 0 for a node with no parents.
+
+    The order co-paths must be resolved in. A co-path's endpoints' variances depend only on
+    co-paths **strictly upstream** of them, so resolving in increasing depth means every dependency
+    is already known -- which is what makes a declared correlation resolvable in a pedigree at all.
+
+    Deliberately expressed in graph terms and not in the genetics layer's ``generation``: ``core``
+    knows nothing about pedigrees, and the dependency is a property of the directed graph.
+
+    Returns ``{}`` for a cyclic model, where "upstream" has no meaning.
+    """
+    parents = {name: list(model.parents(name)) for name in model.names}
+    depths: dict[str, int] = {}
+    # Kahn-style: a node is ready once every parent has a depth
+    pending = set(model.names)
+    while pending:
+        progressed = False
+        for name in sorted(pending):
+            if all(parent in depths for parent in parents[name]):
+                depths[name] = 1 + max((depths[p] for p in parents[name]), default=-1)
+                pending.discard(name)
+                progressed = True
+        if not progressed:
+            return {}  # a directed cycle: nothing is upstream of anything
+    return depths
+
+
+def copath_resolution_order(model: "Model") -> tuple["CoPath", ...]:
+    """Co-paths in the order their coefficients can be resolved.
+
+    Increasing depth of the deeper endpoint, then canonically by endpoints and process so the order
+    is deterministic. Two co-paths at the same depth cannot depend on each other: a co-path does
+    not change the variance of the pair it matches -- only of their descendants -- so same-depth
+    co-paths are independent even when they share a node, which is the half-sibling case.
+    """
+    depths = node_depths(model)
+    if not depths and model.copaths:
+        return tuple(model.copaths)  # cyclic: no meaningful order, caller must cope
+    return tuple(
+        sorted(
+            model.copaths,
+            key=lambda c: (
+                max(depths.get(c.a, 0), depths.get(c.b, 0)),
+                c.a,
+                c.b,
+                c.process,
+            ),
+        )
+    )
+
+
+def copath_mu(
+    copath: "CoPath",
+    var_a: sp.Expr,
+    var_b: sp.Expr,
+    assumptions: dict | None = None,
+) -> sp.Expr:
     """The ``mu`` an engine should use for ``copath``, given its endpoints' variances.
 
     Defined here, once, so the two engines cannot disagree about what a declared correlation
@@ -175,8 +230,21 @@ def copath_mu(copath: "CoPath", var_a: sp.Expr, var_b: sp.Expr) -> sp.Expr:
     """
     if not copath.is_standardized:
         return copath.coefficient
-    if var_a == var_b or sp.simplify(var_a - var_b) == 0:
-        return sp.together(copath.correlation / var_a)
+    equal = var_a == var_b or sp.simplify(var_a - var_b) == 0
+    if not equal and assumptions:
+        # The two may be equal only GIVEN what the model asserts. In a pedigree one partner's
+        # variance is computed from the transmission recursion while the other's is the free symbol
+        # V_A(t) + V_E; they are the same number, but sympy cannot know that without the recursion
+        # the model recorded via `assume`. Without this the radical branch fires and every pedigree
+        # result grows a sqrt it should not have.
+        equal = sp.simplify((var_a - var_b).subs(assumptions)) == 0
+    if equal:
+        # same value, so either may be used -- take the SMALLER expression. In a pedigree that is
+        # the symbolic V_A(t) + V_E rather than the recursion expanded in terms of V_A(0), which
+        # keeps every downstream result in the per-generation symbols the results are stated in.
+        return sp.together(
+            copath.correlation / min((var_a, var_b), key=sp.count_ops)
+        )
     return sp.together(copath.correlation / (sp.sqrt(var_a) * sp.sqrt(var_b)))
 
 

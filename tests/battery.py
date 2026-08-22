@@ -315,6 +315,12 @@ def _imported_models() -> dict[str, pm.Model]:
         # the unrolled pedigree (task-20260804-151350); depth 1 keeps the sweep quick
         "AM pedigree depth 1": g_level_model(am_pedigree(1)).model,
         "AM pedigree half-sibs": g_level_model(am_pedigree(1, half_sib_at=0)).model,
+        # the half-sib pedigree declares its co-paths by CORRELATION, and one person there has two
+        # mates -- the shape that used to be refused outright. In the battery so the agreement sweep
+        # covers dependency-ordered resolution, not just the raw-mu path.
+        "AM pedigree depth 2 (correlation-declared)": g_level_model(
+            am_pedigree(2, children_per_couple=2, breeding_children=1)
+        ).model,
         "AM handwritten (superseded)": pm.from_text(
             (root / "tests" / "fixtures" / "am_equilibrium_handwritten.pmg").read_text(),
             name="AM handwritten",

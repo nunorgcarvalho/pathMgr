@@ -197,31 +197,17 @@ class Diagnosis:
 def _model_issues(model: Model) -> tuple[str, ...]:
     """Model-level findings worth surfacing next to the layout ones.
 
-    The co-path case is here because it cost a real user a real result: declaring two co-paths that
-    share a node -- every half-sibling or in-law pedigree, i.e. one person with two mates -- cannot
-    resolve a declared ``correlation=``, because assortment changes the variance the second one
-    would have to be resolved against. The engines raise ``CoPathVarianceError`` rather than return
-    a wrong number, and this reports the same condition *without* raising, so a figure script can
-    see it coming.
+    This used to also report "a co-path declared by ``correlation=`` shares a node with another
+    co-path", which was a real limitation and which a real user hit. task-20260805-170500 removed
+    the limitation -- the engines now resolve co-paths in dependency order -- so the finding was
+    deleted with it rather than left to warn about something that works. A diagnostic that reports a
+    problem you no longer have is worse than none: it sends the reader to fix the wrong thing.
     """
-    issues: list[str] = []
-    for issue in model.validate():
-        if issue.severity == "error":
-            issues.append(f"[{issue.severity}] {issue.message}")
-    standardized = [c for c in model.copaths if c.is_standardized]
-    for copath in standardized:
-        shared = [
-            other
-            for other in model.copaths
-            if other is not copath and {other.a, other.b} & {copath.a, copath.b}
-        ]
-        if shared:
-            issues.append(
-                f"co-path {copath.a!r} -- {copath.b!r} is declared by correlation but shares a "
-                f"node with another co-path; the engines will raise CoPathVarianceError. Use an "
-                f"explicit coefficient= (raw mu) for these."
-            )
-            break
+    issues = [
+        f"[{issue.severity}] {issue.message}"
+        for issue in model.validate()
+        if issue.severity == "error"
+    ]
     return tuple(issues)
 
 

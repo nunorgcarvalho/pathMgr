@@ -769,37 +769,61 @@ def test_giving_both_forms_is_rejected():
 
 
 @pytest.mark.parametrize("engine", ["ram", "tracer"])
-def test_a_correlation_is_refused_when_another_copath_moves_the_variance(engine):
-    """The mistake this project made while implementing the feature, now impossible to repeat.
+def test_a_correlation_downstream_of_another_copath_resolves(engine):
+    """What task-20260805-170500 exists for, and what 161348 had to refuse.
 
-    A co-path does not change the variance of the variables it matches -- but it DOES change the
-    variance of their descendants, which is the entire content of the AM dynamics. So a second
-    co-path downstream cannot be resolved from co-path-free variances, and must say so rather than
-    return a number understated by the accumulated assortment gain.
+    A co-path does not change the variance of the pair it matches, but it DOES change their
+    descendants' -- that is the entire content of the AM dynamics. So a second co-path downstream
+    of the first cannot be resolved from co-path-free variances. Both engines used to raise here.
+    They now resolve co-paths in dependency order instead, computing each one's variances with only
+    the co-paths upstream of it in play, which is exact rather than approximate.
     """
     m = pm.from_text(
         """
         positive: V
         a ~~ V*a
         b ~~ V*b
-        c ~ 0.5*a + 0.5*b
+        c ~ 1/2*a + 1/2*b
         d ~~ V*d
-        a -- [rho]*b
-        c -- [rho]*d
+        a -- [rho]*b [couple1]
+        c -- [rho]*d [couple2]
         """
     )
     engine_obj = pm.RAMEngine(m) if engine == "ram" else pm.WrightTracer(m)
-    with pytest.raises(CoPathVarianceError, match="cannot be resolved"):
-        engine_obj.cov("a", "b")
+    rho = m.sym("rho")
+    # the upstream pair still gets exactly its declared correlation
+    assert sp.simplify(pm.RAMEngine(m).corr("a", "b") - rho) == 0
+    # and so does the downstream one, whose variances the first co-path moved
+    assert sp.simplify(pm.RAMEngine(m).corr("c", "d") - rho) == 0
+    # both engines see the same thing
+    assert sp.simplify(engine_obj.cov("c", "d") - pm.RAMEngine(m).cov("c", "d")) == 0
 
 
-def test_the_pedigree_still_uses_raw_mu_and_says_why():
-    """Guards the revert: if the pedigree ever switches to correlations, the guard must go first."""
+def test_a_declared_correlation_needs_an_acyclic_model():
+    """"Upstream" has no meaning in a cycle, so there is no order to resolve in."""
+    m = pm.Model("cyclic", units=pm.Units.unstandardized())
+    m.declare("V", positive=True)
+    for name in ("a", "b", "c"):
+        m.add_var(name)
+        m.add_variance(name, "V")
+    m.add_path("a", "b", "p")
+    m.add_path("b", "a", "q")  # a cycle
+    m.add_copath("a", "c", correlation="rho")
+    with pytest.raises(CoPathVarianceError, match="directed cycle"):
+        pm.RAMEngine(m).cov("a", "c")
+
+
+def test_the_pedigree_declares_its_copaths_by_correlation():
+    """The prize from task-20260805-170500: nobody writes mu_t = rho_y/V_P(t) by hand any more.
+
+    That expression was the generation-indexing trap -- right for exactly one generation and
+    silently wrong for the next. It is now derived per generation by the engines, so there is no
+    per-generation coefficient for anyone to copy from the wrong generation.
+    """
     from pathmgr.genetics import am_pedigree, g_level_model
 
     unrolled = g_level_model(am_pedigree(2, children_per_couple=2, breeding_children=1))
     assert unrolled.model.copaths, "no co-paths in the pedigree"
-    assert not any(c.is_standardized for c in unrolled.model.copaths), (
-        "the pedigree declared a co-path by correlation, which CoPathVarianceError says cannot "
-        "be resolved there yet -- see the comment in g_level_model"
+    assert all(c.is_standardized for c in unrolled.model.copaths), (
+        "the pedigree went back to writing mu by hand"
     )

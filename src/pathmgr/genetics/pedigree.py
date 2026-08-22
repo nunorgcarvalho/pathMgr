@@ -712,20 +712,31 @@ def g_level_model(
 
     # THE ONLY cross-couple statement: one co-path per couple, at that couple's generation.
     #
-    # These are declared with the raw mu[t] and NOT with correlation=rho_y, even though the latter
-    # is the recommended form elsewhere and would delete the per-generation bookkeeping below.
-    # It cannot be used here yet: resolving a declared correlation needs the endpoints' true
-    # variances, and in a pedigree those depend on the co-paths of *earlier* generations --
-    # assortment raises the offspring generation's variance. See CoPathVarianceError. Making the
-    # pedigree use correlations needs the engines to resolve co-paths in dependency order, which
-    # is not implemented.
+    # Under hold="rho_y" this is declared by the **correlation**, and the engines derive
+    # mu = rho_y / V_P(t) themselves, resolving co-paths in dependency order so each generation's
+    # coefficient is computed against that generation's actual variances. That is not a shorthand
+    # for writing mu[t]: it removes the generation-indexing mistake as a *possibility*, because
+    # there is no longer a per-generation coefficient for anyone to copy from the wrong generation.
+    # `unrolled.mu` still reports what it resolves to, since the figures label it.
+    #
+    # hold="mu" is a genuinely different model -- the coefficient, not the correlation, is what is
+    # held fixed -- so it stays declared the raw way. Saying the two in different ways is exactly
+    # right: they differ in which quantity is constant.
     for couple in pedigree.couples:
-        model.add_copath(
-            f"y_{couple.maternal}",
-            f"y_{couple.paternal}",
-            mu[couple.generation],
-            process=couple.key,
-        )
+        if parameters.hold == "rho_y":
+            model.add_copath(
+                f"y_{couple.maternal}",
+                f"y_{couple.paternal}",
+                correlation=rho_y,
+                process=couple.key,
+            )
+        else:
+            model.add_copath(
+                f"y_{couple.maternal}",
+                f"y_{couple.paternal}",
+                mu[couple.generation],
+                process=couple.key,
+            )
 
     unrolled = UnrolledModel(
         model=model,

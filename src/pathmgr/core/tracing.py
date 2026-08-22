@@ -83,7 +83,14 @@ from itertools import chain as _iterchain
 
 import sympy as sp
 
-from .model import CoPath, CoPathVarianceError, Model, copath_mu
+from .model import (
+    CoPath,
+    CoPathVarianceError,
+    Model,
+    copath_mu,
+    copath_resolution_order,
+    node_depths,
+)
 from .units import Units
 
 __all__ = [
@@ -590,45 +597,87 @@ class WrightTracer:
                         )
 
     def _mu(self, copath: CoPath) -> sp.Expr:
-        """This co-path's ``mu``, derived from co-path-free variances if declared by correlation.
+        """This co-path's ``mu``, derived from the right variances if declared by correlation.
 
-        Cached per ``model.revision``: it is asked for once per chain otherwise, and the equal-
-        variance test inside :func:`~pathmgr.core.model.copath_mu` calls ``simplify``.
+        "The right variances" is the whole difficulty. Resolving ``mu = rho / (sd_a * sd_b)`` needs
+        the endpoints' true variances, and under assortment those include the effect of every
+        co-path **upstream** of them -- a co-path does not change the variance of the pair it
+        matches, but it does change their descendants'. So co-paths are resolved in
+        :func:`~pathmgr.core.model.copath_resolution_order`, and each one's variances are traced
+        with only the *earlier* processes allowed.
+
+        Computed here independently of the RAM engine, which does the same thing with matrix
+        entries. The two share the definition of what a declared correlation means and nothing else,
+        which is what keeps the agreement property worth having.
         """
         if not copath.is_standardized:
             return copath.coefficient
+        self._refresh_mu_cache()
         key = (copath.a, copath.b, copath.process)
+        if key not in self._mu_cache:
+            self._resolve_all_mus()
+        return self._mu_cache[key]
+
+    def _refresh_mu_cache(self) -> None:
         if self._mu_cache_revision != self.model.revision:
             self._mu_cache = {}
             self._mu_cache_revision = self.model.revision
-        if key not in self._mu_cache:
-            self._require_copath_free_variance(copath)
-            self._mu_cache[key] = copath_mu(
-                copath,
-                self._copath_free_cov(copath.a, copath.a),
-                self._copath_free_cov(copath.b, copath.b),
+
+    def _resolve_all_mus(self) -> None:
+        """Resolve every declared correlation, in dependency order, caching as it goes."""
+        depths = node_depths(self.model)
+        if not depths and any(c.is_standardized for c in self.model.copaths):
+            raise CoPathVarianceError(
+                "this model has a directed cycle, so no co-path is upstream of another and a "
+                "declared correlation cannot be resolved in dependency order. Give the co-paths "
+                "an explicit coefficient= (raw mu)."
             )
-        return self._mu_cache[key]
+        allowed: set[str] = set()
+        for copath in copath_resolution_order(self.model):
+            key = (copath.a, copath.b, copath.process)
+            if copath.is_standardized:
+                self._mu_cache[key] = copath_mu(
+                    copath,
+                    self._var_with_processes(copath.a, frozenset(allowed)),
+                    self._var_with_processes(copath.b, frozenset(allowed)),
+                    self.model.substitutions(),
+                )
+            else:
+                self._mu_cache[key] = copath.coefficient
+            allowed.add(copath.process)
 
-    def _require_copath_free_variance(self, copath: CoPath) -> None:
-        """Mirror of the RAM engine's guard; see :class:`CoPathVarianceError` for the why.
+    def _var_with_processes(self, x: str, allowed: frozenset[str]) -> sp.Expr:
+        """``Var[x]`` traced using only the co-path processes in ``allowed``.
 
-        Deliberately duplicated rather than shared: the two engines must reach the same verdict by
-        their own route, and this one is stated in terms of chains rather than matrix entries.
+        Not ``self.var(x)``: that would use every co-path, including the one being resolved and any
+        downstream of it, which is circular. Restricting to the already-resolved processes is what
+        makes the recursion terminate and what makes the answer exact.
         """
-        for endpoint in (copath.a, copath.b):
-            for other in self.model.copaths:
-                if (other.a, other.b, other.process) == (copath.a, copath.b, copath.process):
-                    continue
-                for far in (other.a, other.b):
-                    if self._copath_free_cov(endpoint, far) != 0:
-                        raise CoPathVarianceError(
-                            f"co-path {copath.a!r} -- {copath.b!r} is declared by correlation, but "
-                            f"{endpoint!r} is already correlated with {far!r} before assortment, "
-                            f"so the co-path {other.a!r} -- {other.b!r} changes Var[{endpoint}] "
-                            f"and the correlation cannot be resolved from the co-path-free "
-                            f"variances. Give this co-path an explicit coefficient= (raw mu) "
-                            f"instead. See CoPathVarianceError."
+        total = sp.Integer(0)
+        for chain in self._chains_within(x, x, allowed, frozenset()):
+            total += chain.contribution
+        return sp.expand(total)
+
+    def _chains_within(self, x: str, y: str, allowed: frozenset[str], used: frozenset[str]):
+        """:meth:`_chains`, restricted to co-paths whose process is in ``allowed``."""
+        for segment in self._segments(x, y):
+            factors = self._segment_factors(segment)
+            yield self._build([segment], (), factors)
+        for copath in self.model.copaths:
+            if copath.process not in allowed or copath.process in used:
+                continue
+            key = (copath.a, copath.b, copath.process)
+            mu = self._mu_cache.get(key, copath.coefficient)
+            if mu is None or mu == 0:
+                continue
+            for near, far in sorted({(copath.a, copath.b), (copath.b, copath.a)}):
+                for segment in self._segments(x, near):
+                    head = self._segment_factors(segment)
+                    for rest in self._chains_within(far, y, allowed, used | {copath.process}):
+                        yield self._build(
+                            [segment, *rest.segments],
+                            (copath, *rest.crossings),
+                            head + (mu,) + rest.factors,
                         )
 
     def _copath_free_cov(self, x: str, y: str) -> sp.Expr:

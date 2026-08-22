@@ -49,9 +49,18 @@ what a bidirected edge cannot do. See `src/pathmgr/core/model.py`, Sunde et al. 
 (Nat Commun, Supplementary Notes 1 and 3), and `tests/test_copath.py`, whose decisive case is
 `test_copath_reaches_the_causes_but_a_bidirected_edge_does_not`.
 
-`Cov[a, b] = mu * Var[a] * Var[b]`, so `mu_t = rho_y / V_P(t)` — **generation-indexed**, which is
-the second half of the same trap: a co-path coefficient copied between generations is wrong
-wherever `V_P` has moved.
+`Cov[a, b] = mu * Var[a] * Var[b]`, so `mu_t = rho_y / V_P(t)` — **generation-indexed**. That was
+the second half of the same trap: a co-path coefficient copied between generations is wrong wherever
+`V_P` has moved.
+
+**That half of the trap is now closed by construction.** Declare a co-path by the correlation it
+induces — `y_m -- [rho_y]*y_p` — and the engines derive `mu` themselves, resolving co-paths in
+dependency order so each one is computed against the variances that actually obtain at its own
+depth. Nobody writes `mu_t` any more, so nobody can copy it from the wrong generation. Getting there
+needed one non-obvious fact: a co-path does *not* change the variance of the pair it matches, but it
+*does* change their descendants' — which is the entire content of the AM dynamics — so a downstream
+co-path resolved against co-path-free variances is understated by the accumulated assortment gain.
+Ordering by graph depth makes every dependency already known when a co-path's turn comes.
 
 ## The three encodings side by side
 
@@ -59,7 +68,8 @@ wherever `V_P` has moved.
 |---|---|---|---|---|
 | bidirected `g_m <-> g_p` | correct | **non-PSD, silently** | no | n/a |
 | directed from `y_focal` | correct | correct | yes | no (equilibrium-only) |
-| co-path `y_m -- y_p` | correct | correct | yes | yes, with `mu_t = rho_y/V_P(t)` |
+| co-path `y_m -- [rho_y]*y_p` | correct | correct | yes | yes, and `mu` is derived per generation |
+| co-path with raw `mu` | correct | correct | yes | only if you index `mu` by generation yourself |
 
 Both correct encodings are kept, and both are in the battery, so the two-engine agreement sweep
 covers them. `tests/fixtures/am_equilibrium_handwritten.pmg` retains the **superseded** encoding
