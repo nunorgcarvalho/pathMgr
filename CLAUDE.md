@@ -418,6 +418,25 @@ does not quietly break its neighbours. Suppression is enforced in `edge_label`, 
 honouring it in placement and forgetting it in a renderer is exactly what the moved-loop regression
 was made of.
 
+**`diagnose()` also reports the figure's SIZE, because nothing else did.** Every collision metric
+asks "do things overlap each other"; none asked "how big is the whole picture" — so the placer could
+improve every number it knew about while making a figure too wide for its page, and report success.
+That happened: a `sidewaysfigure` came out 0 collisions / 0 ambiguous / 0 crossings and gained an
+overfull hbox, because the two outermost loops had open air beside them and went flat sideways,
+putting their labels outside the node span. `Extent` reports width, height, the node span, the
+`overhang` between them, and which labels reach outside it; `diagnose(max_width=…)` turns that into
+a tripwire that names the responsible labels. **Report only** — the placer is not made to optimise
+under a size budget, which would trade away collision-freedom nobody asked to lose. The absolute cm
+are estimated (~5% low on the measured figure); the overhang and the named labels are the exact,
+actionable part.
+
+**Ambiguity does not count leadered labels.** A hairline back to the edge resolves attribution by
+construction, so counting it as ambiguous undercounts leaders on exactly the figures they exist for.
+They are reported separately as `leadered` rather than dropped — "moved far and connected" is a
+different state from "unattributable", and folding them into a quietly better number would improve a
+metric for a reason no reader could see. Re-reporting the existing figures: ambiguous 53 → 39, with
+14 reclassified; the writeup's four figures have none, so their numbers were already honest.
+
 **Two method notes, both learned the hard way, both likely to recur.**
 
 - **A mechanism cannot be both the escape hatch and one of the ordinary options it escapes from.**

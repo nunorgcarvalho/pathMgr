@@ -39,7 +39,15 @@ from .placement import (
 )
 from .style import DiagramStyle
 
-__all__ = ["Collision", "CollisionReport", "Diagnosis", "collision_report", "diagnose"]
+__all__ = [
+    "Collision",
+    "CollisionReport",
+    "Diagnosis",
+    "Extent",
+    "collision_report",
+    "diagnose",
+    "extent",
+]
 
 
 @dataclass(frozen=True)
@@ -61,8 +69,16 @@ class CollisionReport:
     """Every outstanding overlap in one diagram, plus the totals worth quoting."""
 
     collisions: list[Collision] = field(default_factory=list)
-    #: labels whose nearest foreign edge is closer than their own -- placed, but unattributable
+    #: labels whose nearest foreign edge is closer than their own -- placed, but unattributable.
+    #: **Leadered labels are excluded**: a hairline back to the edge resolves attribution *by
+    #: construction*, which is the entire reason leaders exist, so counting them here would
+    #: undercount the feature on exactly the figures it was built for.
     ambiguous: list[tuple[tuple[str, str], float]] = field(default_factory=list)
+    #: labels that WOULD have been ambiguous but carry a leader line. Reported separately rather
+    #: than silently dropped: "moved far and connected" is a different state from "unattributable",
+    #: and a reader wants the count -- it is how many hairlines the figure has. Folding them into a
+    #: quietly better `ambiguous` number would improve a metric for a reason nobody could see.
+    leadered: list[tuple[tuple[str, str], float]] = field(default_factory=list)
     n_labels: int = 0
 
     def of_kind(self, kind: str) -> list[Collision]:
@@ -79,6 +95,8 @@ class CollisionReport:
             hits = self.of_kind(kind)
             parts.append(f"{kind}={len(hits)}/{sum(h.amount for h in hits):.3f}")
         parts.append(f"ambiguous={len(self.ambiguous)}")
+        if self.leadered:
+            parts.append(f"leadered={len(self.leadered)}")
         return f"labels={self.n_labels}  " + "  ".join(parts)
 
     def __str__(self) -> str:
@@ -89,6 +107,11 @@ class CollisionReport:
             lines.append(f"  {collision}")
         for key, margin in sorted(self.ambiguous, key=lambda item: item[1]):
             lines.append(f"  ambiguous: label[{key[0]}--{key[1]}] margin {margin:+.3f}")
+        for key, margin in sorted(self.leadered, key=lambda item: item[1]):
+            lines.append(
+                f"  leadered: label[{key[0]}--{key[1]}] margin {margin:+.3f} "
+                f"(attribution carried by its leader line)"
+            )
         return "\n".join(lines)
 
 
@@ -149,9 +172,174 @@ def collision_report(
             if nearest_foreign is None or distance < nearest_foreign:
                 nearest_foreign, foreign_key = distance, path.key
         if own is not None and nearest_foreign is not None and nearest_foreign < own:
-            report.ambiguous.append((key, nearest_foreign - own))
+            margin = nearest_foreign - own
+            if placement.leader_to is not None:
+                report.leadered.append((key, margin))
+            else:
+                report.ambiguous.append((key, margin))
         placed.append((key, rect))
     return report
+
+
+
+@dataclass
+class Extent:
+    """How big the drawing is, and what is sticking out of it.
+
+    **Nothing else here measures this**, and that is the gap it exists to close. Every other number
+    in this module asks "do things overlap each other"; none asks "how big is the whole picture". So
+    the placer can improve every metric it knows about while making a figure too wide to use, and
+    report success -- which is exactly what happened to a `sidewaysfigure` already at the page limit:
+    zero collisions, zero ambiguous, zero crossings, and a new overfull hbox.
+
+    It will recur, and specifically because of leader lines and far placement: both work by moving
+    labels **outward**, which is what grows the bounding box. The better the placer gets at avoiding
+    collisions, the more often it inflates the footprint.
+
+    **The absolute centimetres are an estimate; the comparisons are the useful part.** Node and
+    label sizes come from :func:`~pathmgr.render.style.text_width`, which is fitted rather than
+    exact. Measured against a direct ``\hbox`` of the same ``tikzpicture``, this read 22.246 cm
+    where pdflatex measured 23.313 cm -- about 5% low on that figure. So:
+
+    - **Do** use :attr:`overhang` and :attr:`outside` to catch a regression and to find *which*
+      labels are responsible. Those are computed from the same geometry the placer used, so they
+      answer "did this get wider, and because of what" exactly. On the figure that prompted this
+      they named precisely the two loops the consumer had to override.
+    - **Do not** treat :attr:`width` as a page-fit test. Take the authoritative number from the
+      LaTeX log; a budget declared here is a tripwire, not a certificate.
+    """
+
+    min_x: float
+    min_y: float
+    max_x: float
+    max_y: float
+    #: the extent of the node boxes alone -- the "intended" footprint of the diagram
+    node_min_x: float
+    node_min_y: float
+    node_max_x: float
+    node_max_y: float
+    #: labels and leader endpoints reaching beyond the node span, worst first, as
+    #: ``(label key, centimetres beyond, which side)``
+    outside: tuple[tuple[tuple[str, str], float, str], ...] = ()
+
+    @property
+    def width(self) -> float:
+        return self.max_x - self.min_x
+
+    @property
+    def height(self) -> float:
+        return self.max_y - self.min_y
+
+    @property
+    def node_width(self) -> float:
+        return self.node_max_x - self.node_min_x
+
+    @property
+    def node_height(self) -> float:
+        return self.node_max_y - self.node_min_y
+
+    @property
+    def overhang(self) -> float:
+        """How much wider the picture is than its nodes. The number that changed."""
+        return self.width - self.node_width
+
+    def summary(self) -> str:
+        return (
+            f"extent {self.width:.3f} x {self.height:.3f} cm "
+            f"(nodes {self.node_width:.3f} x {self.node_height:.3f}, "
+            f"overhang {self.overhang:+.3f})"
+        )
+
+
+def extent(model: Model, layout: Layout, style: DiagramStyle | None = None) -> Extent:
+    """The drawing's bounding box, and which labels reach outside the node span.
+
+    Both back ends are measured by this one function: they place labels from the same
+    :func:`~pathmgr.render.placement.place_labels` result and draw the same loops, so their extents
+    agree up to how TeX versus matplotlib typesets a label -- which is the estimator's error, not a
+    difference between the back ends. One number, and the caveat about it, rather than two.
+    """
+    from .placement import (
+        DEFAULT_LOOP_DIRECTION,
+        DEFAULT_LOOP_LOOSENESS,
+        loop_path,
+    )
+
+    style = style or DiagramStyle()
+    layout = layout.completed(model)
+    coding = style.coefficient_coding(model)
+    edges = labelled_edges(model, style, coding)
+    placements = place_labels(model, layout, style, edges)
+    texts = {key: text for key, text, _bow, _kind in edges}
+
+    node_xs: list[float] = []
+    node_ys: list[float] = []
+    for name in model.names:
+        if name not in layout:
+            continue
+        rect = node_rect(name, model, layout, style)
+        x, y = layout[name]
+        node_xs += [x - rect.width / 2, x + rect.width / 2]
+        node_ys += [y - rect.height / 2, y + rect.height / 2]
+    if not node_xs:
+        return Extent(0, 0, 0, 0, 0, 0, 0, 0)
+
+    span = (min(node_xs), min(node_ys), max(node_xs), max(node_ys))
+    xs, ys = list(node_xs), list(node_ys)
+    outside: list[tuple[tuple[str, str], float, str]] = []
+
+    def note(key, lo_x, lo_y, hi_x, hi_y) -> None:
+        xs.extend((lo_x, hi_x))
+        ys.extend((lo_y, hi_y))
+        for over, side in (
+            (span[0] - lo_x, "left"),
+            (hi_x - span[2], "right"),
+            (span[1] - lo_y, "below"),
+            (hi_y - span[3], "above"),
+        ):
+            if over > 1e-9:
+                outside.append((key, over, side))
+
+    for key, placement in placements.items():
+        text = texts.get(key)
+        if not text:
+            continue
+        rect = label_rect(placement.point, text, style)
+        left, bottom, right, top = rect.bounds
+        note(key, left, bottom, right, top)
+        if placement.leader_to is not None:
+            lx, ly = placement.leader_to
+            note(key, lx, ly, lx, ly)
+
+    # variance loops reach beyond their node whether or not they carry a label
+    loop_choices = {
+        key[0]: (p.loop_direction, p.loop_looseness)
+        for key, p in placements.items()
+        if p.loop_direction is not None
+    }
+    for edge in model.bidirected_edges:
+        if not edge.is_variance or edge.a not in layout:
+            continue
+        if not style.draws_variance(False):
+            continue
+        direction, looseness = loop_choices.get(
+            edge.a, (DEFAULT_LOOP_DIRECTION, DEFAULT_LOOP_LOOSENESS)
+        )
+        arc = loop_path(layout[edge.a], node_rect(edge.a, model, layout, style), direction, looseness)
+        xs.extend(point[0] for point in arc)
+        ys.extend(point[1] for point in arc)
+
+    return Extent(
+        min_x=min(xs),
+        min_y=min(ys),
+        max_x=max(xs),
+        max_y=max(ys),
+        node_min_x=span[0],
+        node_min_y=span[1],
+        node_max_x=span[2],
+        node_max_y=span[3],
+        outside=tuple(sorted(outside, key=lambda item: (-item[1], item[0], item[2]))),
+    )
 
 
 @dataclass
@@ -173,6 +361,10 @@ class Diagnosis:
     model_issues: tuple[str, ...] = ()
     #: things a human may want to look at that are NOT defects -- see :func:`_consistency_advisories`
     advisories: tuple[str, ...] = ()
+    #: how big the picture is, and what sticks out of it
+    extent: Extent | None = None
+    #: budget overshoots, as ``(axis, limit, actual)`` -- empty when no budget was given or it holds
+    over_budget: tuple[tuple[str, float, float], ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -182,14 +374,20 @@ class Diagnosis:
         asserts ``.ok`` must not start failing because a figure has two identically-labelled edges
         placed differently -- which is often the *correct* outcome.
         """
-        return not self.collisions.collisions and not self.collisions.ambiguous and (
-            not self.crossings and not self.model_issues
+        return (
+            not self.collisions.collisions
+            and not self.collisions.ambiguous
+            and not self.crossings
+            and not self.model_issues
+            and not self.over_budget
         )
 
     def summary(self) -> str:
+        size = f"  {self.extent.summary()}" if self.extent is not None else ""
+        budget = f"  OVER BUDGET x{len(self.over_budget)}" if self.over_budget else ""
         return (
             f"{self.collisions.summary()}  crossings={len(self.crossings)}  "
-            f"model={len(self.model_issues)}  advisories={len(self.advisories)}"
+            f"model={len(self.model_issues)}  advisories={len(self.advisories)}{size}{budget}"
         )
 
     def __str__(self) -> str:
@@ -200,6 +398,17 @@ class Diagnosis:
             lines.append(f"  model: {issue}")
         for advisory in self.advisories:
             lines.append(f"  advisory: {advisory}")
+        for axis, limit, actual in self.over_budget:
+            lines.append(
+                f"  over budget: {axis} {actual:.3f}cm exceeds {limit:.3f}cm "
+                f"by {actual - limit:.3f}cm"
+            )
+        if self.extent is not None:
+            for key, over, side in self.extent.outside[:8]:
+                lines.append(
+                    f"  outside the node span: label[{key[0]}--{key[1]}] "
+                    f"{over:.3f}cm {side}"
+                )
         return "\n".join(lines)
 
 
@@ -293,6 +502,8 @@ def diagnose(
     model: Model,
     layout: Layout | None = None,
     style: DiagramStyle | None = None,
+    max_width: float | None = None,
+    max_height: float | None = None,
 ) -> Diagnosis:
     """What is still wrong with this figure -- usable as an assertion from a generator script.
 
@@ -306,6 +517,13 @@ def diagnose(
     worse, rather than shipping it:
 
         assert diagnose(model, layout, style).ok, diagnose(model, layout, style)
+
+    ``max_width`` / ``max_height`` declare a size budget in cm -- for a figure that has to fit a
+    page. Exceeding it makes the report not ``ok`` and names **which** labels are responsible, so
+    the caller knows which to override. The placer is deliberately **not** made to optimise under
+    the budget: placing labels under a width constraint is a much larger problem and would trade
+    away collision-freedom nobody asked to lose. This reports; the human decides, as with the other
+    advisories. Note the extent is estimated -- see :class:`Extent`.
     """
     from .placement import edge_node_crossings
 
@@ -315,9 +533,17 @@ def diagnose(
     edges = labelled_edges(model, style, coding)
     placements = place_labels(model, layout, style, edges)
     texts = {key: text for key, text, _bow, _kind in edges}
+    size = extent(model, layout, style)
+    over: list[tuple[str, float, float]] = []
+    if max_width is not None and size.width > max_width:
+        over.append(("width", max_width, size.width))
+    if max_height is not None and size.height > max_height:
+        over.append(("height", max_height, size.height))
     return Diagnosis(
         collisions=collision_report(model, layout, style),
         crossings=tuple(edge_node_crossings(model, layout, style)),
         model_issues=_model_issues(model),
         advisories=_consistency_advisories(model, layout, style, placements, texts),
+        extent=size,
+        over_budget=tuple(over),
     )

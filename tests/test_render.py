@@ -1698,3 +1698,93 @@ def test_no_advisory_when_no_label_is_repeated():
         "positive: V\ny ~ b1*x1 + b2*x2\nx1 ~~ V*x1\nx2 ~~ V*x2\ny ~~ V*y"
     )
     assert not diagnose(model, Layout()).advisories
+
+
+# ======================================================================================
+# extent, size budget, and leader-aware ambiguity (task-20260821-212418)
+# ======================================================================================
+def _span_model():
+    """Two nodes side by side. Forcing the right one's loop flat right pushes its label out."""
+    return pm.from_text("positive: V\na ~~ V*a\nb ~ 2*a\nb ~~ V*b")
+
+
+def _span_layout():
+    return Layout({"a": (0.0, 0.0), "b": (3.0, 0.0)})
+
+
+def test_extent_reports_the_picture_and_the_node_span_separately():
+    """Nothing else here measures the figure's own size, which is how a clean report shipped a
+    figure too wide for its page."""
+    from pathmgr.render.diagnostics import extent
+
+    size = extent(_span_model(), _span_layout(), DiagramStyle())
+    assert size.width > 0 and size.height > 0
+    assert size.node_width > 0
+    assert size.width >= size.node_width - 1e-9
+    assert size.overhang == size.width - size.node_width
+
+
+def test_a_label_pushed_outside_the_node_span_is_named():
+    """The specific thing that grew the writeup's figure: a flat sideways loop label."""
+    from pathmgr.render.diagnostics import extent
+
+    style = DiagramStyle(loop_overrides={"b": (0.0, 6.0)})   # b's loop flat to the RIGHT
+    size = extent(_span_model(), _span_layout(), style)
+    right = {key[0]: over for key, over, side in size.outside if side == "right"}
+    assert "b" in right, size.outside
+    # pointing the loop UP instead moves that overhang off the width, which is the whole point:
+    # the same figure, the same collisions, a materially narrower picture
+    up = extent(_span_model(), _span_layout(), DiagramStyle(loop_overrides={"b": (90.0, 6.0)}))
+    up_right = {key[0]: over for key, over, side in up.outside if side == "right"}
+    assert up_right.get("b", 0.0) < right["b"] / 2, (right, up_right)
+    assert up.width < size.width
+
+
+def test_a_size_budget_is_checked_and_names_who_broke_it():
+    """A figure script must be able to assert 'this still fits' and be told what to override."""
+    from pathmgr.render.diagnostics import diagnose, extent
+
+    style = DiagramStyle(loop_overrides={"b": (0.0, 6.0)})
+    wide = extent(_span_model(), _span_layout(), style).width
+    tight = diagnose(_span_model(), _span_layout(), style, max_width=wide - 0.3)
+    assert tight.over_budget, "an exceeded budget was not reported"
+    axis, limit, actual = tight.over_budget[0]
+    assert axis == "width" and actual > limit
+    assert not tight.ok, "over budget must fail .ok -- that is the point of declaring one"
+    # the report names the responsible label, not merely that it is too wide
+    assert any(key[0] == "b" for key, _o, _s in tight.extent.outside), tight.extent.outside
+
+    roomy = diagnose(_span_model(), _span_layout(), style, max_width=wide + 1.0)
+    assert not roomy.over_budget and roomy.ok
+
+
+def test_no_budget_means_no_budget_finding():
+    from pathmgr.render.diagnostics import diagnose
+
+    report = diagnose(_span_model(), _span_layout(), DiagramStyle())
+    assert report.over_budget == ()
+    assert report.extent is not None, "extent is reported whether or not a budget was given"
+
+
+def test_a_leadered_label_is_not_counted_as_ambiguous():
+    """A leader resolves attribution BY CONSTRUCTION, which is the whole reason leaders exist.
+
+    Counting a leadered label as ambiguous undercounts the feature on exactly the figures it was
+    built for. They are reported separately rather than dropped, because "moved far and connected"
+    is a different state from "unattributable" and the count is worth having.
+    """
+    import battery
+    from pathmgr.render.diagnostics import collision_report
+
+    # a battery model dense enough that leaders are both used AND land nearer a foreign edge --
+    # which is exactly the case the old count mis-scored
+    model, layout = battery.lineage(2), Layout()
+    with_leaders = collision_report(model, layout, DiagramStyle(leader_lines=True))
+    assert with_leaders.leadered, "expected at least one leadered label in this fixture"
+    for key, _margin in with_leaders.leadered:
+        assert key not in [k for k, _m in with_leaders.ambiguous], key
+    # the same figure without leaders counts those labels as ambiguous instead
+    without = collision_report(model, layout, DiagramStyle(leader_lines=False))
+    assert not without.leadered
+    assert len(without.ambiguous) >= len(with_leaders.ambiguous)
+    assert "leadered=" in with_leaders.summary()
